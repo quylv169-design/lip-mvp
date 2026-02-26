@@ -3,6 +3,10 @@
    LIP – Light theme chuẩn
    =============================== */
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* ===== Reset ===== */
 html,
 body {
@@ -13,15 +17,9 @@ body {
 
 body {
   background: #f6f7fb !important; /* nền chính */
-  color: #0f172a !important;      /* text primary */
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    Segoe UI,
-    Roboto,
-    Helvetica,
-    Arial;
+  color: #0f172a !important; /* text primary */
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+    Helvetica, Arial;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -53,7 +51,7 @@ body {
   --btn-border: rgba(15, 23, 42, 0.14);
 
   --btn-primary-bg: rgba(37, 99, 235, 0.12);
-  --btn-primary-border: rgba(37, 99, 235, 0.30);
+  --btn-primary-border: rgba(37, 99, 235, 0.3);
 
   /* Status */
   --danger: #dc2626;
@@ -61,7 +59,7 @@ body {
   --warn-bg: rgba(245, 158, 11, 0.12);
 
   --success-border: rgba(34, 197, 94, 0.35);
-  --success-bg: rgba(34, 197, 94, 0.10);
+  --success-bg: rgba(34, 197, 94, 0.1);
 }
 
 /* =========================================
