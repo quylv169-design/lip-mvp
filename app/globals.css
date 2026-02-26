@@ -3,9 +3,7 @@
    LIP – Light theme chuẩn
    =============================== */
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 /* ===== Reset ===== */
 html,
