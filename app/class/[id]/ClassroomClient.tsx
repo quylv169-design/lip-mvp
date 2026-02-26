@@ -332,7 +332,12 @@ function AutoDisconnectOnUnload() {
   return null;
 }
 
-function MediaControls() {
+/**
+ * Local controls:
+ * - ALL users: Mic + Cam toggle
+ * - Tutor only: Share toggle
+ */
+function LocalControls() {
   const room = useRoomContext();
   const local = room?.localParticipant;
 
@@ -340,8 +345,6 @@ function MediaControls() {
 
   const { camOn, micOn, shareOn } = useLocalMediaState(room);
   const [busy, setBusy] = useState<null | "cam" | "mic" | "share">(null);
-
-  if (!meIsTutor) return null;
 
   const btnBase: React.CSSProperties = {
     fontFamily: UI_FONT,
@@ -385,7 +388,7 @@ function MediaControls() {
           ...btnBase,
           opacity: !local || busy !== null ? 0.55 : 1,
         }}
-        title="Bật/Tắt camera của bạn (Tutor)"
+        title="Bật/Tắt camera của bạn"
       >
         📷 <span>Cam</span> <span style={pill(camOn)}>{camOn ? "On" : "Off"}</span>
       </button>
@@ -405,30 +408,32 @@ function MediaControls() {
           ...btnBase,
           opacity: !local || busy !== null ? 0.55 : 1,
         }}
-        title="Bật/Tắt micro của bạn (Tutor)"
+        title="Bật/Tắt micro của bạn"
       >
         🎙️ <span>Mic</span> <span style={pill(micOn)}>{micOn ? "On" : "Off"}</span>
       </button>
 
-      <button
-        disabled={!local || busy !== null}
-        onClick={async () => {
-          if (!local) return;
-          setBusy("share");
-          try {
-            await local.setScreenShareEnabled(!shareOn);
-          } finally {
-            setBusy(null);
-          }
-        }}
-        style={{
-          ...btnBase,
-          opacity: !local || busy !== null ? 0.55 : 1,
-        }}
-        title="Share/Stop màn hình (Tutor)"
-      >
-        🖥️ <span>Share</span> <span style={pill(shareOn)}>{shareOn ? "On" : "Off"}</span>
-      </button>
+      {meIsTutor && (
+        <button
+          disabled={!local || busy !== null}
+          onClick={async () => {
+            if (!local) return;
+            setBusy("share");
+            try {
+              await local.setScreenShareEnabled(!shareOn);
+            } finally {
+              setBusy(null);
+            }
+          }}
+          style={{
+            ...btnBase,
+            opacity: !local || busy !== null ? 0.55 : 1,
+          }}
+          title="Share/Stop màn hình (Tutor)"
+        >
+          🖥️ <span>Share</span> <span style={pill(shareOn)}>{shareOn ? "On" : "Off"}</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -463,7 +468,7 @@ function Board() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ fontWeight: 800, fontSize: 14, opacity: 0.9 }}>Board</div>
           <LeaveButton to="/app" />
-          <MediaControls />
+          <LocalControls />
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.65 }}>
@@ -530,7 +535,9 @@ function useSimpleChat(room: Room | undefined) {
         setMessages((prev) => [
           ...prev,
           {
-            id: `${obj.ts}-${participant?.identity ?? "unknown"}-${Math.random().toString(16).slice(2)}`,
+            id: `${obj.ts}-${participant?.identity ?? "unknown"}-${Math.random()
+              .toString(16)
+              .slice(2)}`,
             ts: obj.ts,
             from: participant ? labelOf(participant) : "system",
             text: obj.t,
