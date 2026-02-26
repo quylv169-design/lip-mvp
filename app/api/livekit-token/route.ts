@@ -91,7 +91,9 @@ export async function POST(req: Request) {
     const roomName = `class_${classId}`;
 
     const fullName =
-      (typeof profile.full_name === "string" && profile.full_name.trim()) ? profile.full_name.trim() : userId;
+      typeof profile.full_name === "string" && profile.full_name.trim()
+        ? profile.full_name.trim()
+        : userId;
 
     const at = new AccessToken(getEnv("LIVEKIT_API_KEY"), getEnv("LIVEKIT_API_SECRET"), {
       identity: userId,
