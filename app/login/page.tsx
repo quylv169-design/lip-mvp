@@ -88,11 +88,7 @@ export default function LoginPage() {
         <h2 className="text-xl font-semibold text-center mb-1">
           {mode === "login" ? "Đăng nhập" : "Tạo tài khoản học sinh"}
         </h2>
-
-        <p className="text-center text-sm text-gray-500 mb-6">
-          Buổi 1 • Present Simple
-        </p>
-
+        
         <form className="space-y-4" onSubmit={onSubmit}>
           {mode === "signup" && (
             <div>
