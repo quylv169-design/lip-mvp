@@ -1,0 +1,111 @@
+/* ===============================
+   app/globals.css
+   LIP – Light theme chuẩn
+   =============================== */
+
+/* ===== Reset ===== */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #f6f7fb !important; /* nền chính */
+  color: #0f172a !important;      /* text primary */
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    Helvetica,
+    Arial;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== Core light tokens ===== */
+:root {
+  /* Backgrounds */
+  --bg-main: #f6f7fb;
+  --bg-elev: #ffffff;
+  --bg-soft: #f1f5f9;
+
+  /* Text */
+  --text-primary: #0f172a;
+  --text-muted: #475569;
+  --text-faint: #64748b;
+
+  /* Borders & shadow */
+  --border: rgba(15, 23, 42, 0.12);
+  --border-strong: rgba(15, 23, 42, 0.18);
+  --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  --shadow-strong: 0 18px 60px rgba(15, 23, 42, 0.12);
+
+  /* Brand */
+  --primary: #2563eb;
+  --primary-weak: rgba(37, 99, 235, 0.12);
+
+  /* Buttons */
+  --btn-bg: rgba(15, 23, 42, 0.04);
+  --btn-border: rgba(15, 23, 42, 0.14);
+
+  --btn-primary-bg: rgba(37, 99, 235, 0.12);
+  --btn-primary-border: rgba(37, 99, 235, 0.30);
+
+  /* Status */
+  --danger: #dc2626;
+  --warn-border: rgba(245, 158, 11, 0.35);
+  --warn-bg: rgba(245, 158, 11, 0.12);
+
+  --success-border: rgba(34, 197, 94, 0.35);
+  --success-bg: rgba(34, 197, 94, 0.10);
+}
+
+/* =========================================
+   LIP alias tokens (StudentDashboard dùng)
+   ========================================= */
+
+:root {
+  /* Text */
+  --lip-text: var(--text-primary);
+  --lip-text-muted: var(--text-muted);
+
+  /* Surfaces */
+  --lip-surface-0: var(--bg-elev);
+  --lip-surface-1: var(--bg-soft);
+  --lip-surface-2: rgba(15, 23, 42, 0.03);
+
+  /* Borders */
+  --lip-border: var(--border);
+  --lip-border-strong: var(--border-strong);
+  --lip-divider: var(--border);
+
+  /* Shadows */
+  --lip-shadow: var(--shadow);
+  --lip-shadow-strong: var(--shadow-strong);
+
+  /* CTA */
+  --lip-cta-bg: var(--btn-primary-bg);
+
+  /* Modal / overlay */
+  --lip-overlay: rgba(15, 23, 42, 0.28);
+  --lip-modal-bg: var(--bg-elev);
+
+  /* Status */
+  --lip-warn-border: var(--warn-border);
+  --lip-warn-bg: var(--warn-bg);
+
+  --lip-success-border: var(--success-border);
+  --lip-success-bg: var(--success-bg);
+  --lip-success-text: var(--text-primary);
+
+  --lip-error: var(--danger);
+}
+
+/* Selection */
+::selection {
+  background: rgba(37, 99, 235, 0.18);
+}
