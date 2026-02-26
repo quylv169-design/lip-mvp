@@ -72,6 +72,12 @@ function useAllParticipants(room: Room | undefined) {
     room.on(RoomEvent.ParticipantMetadataChanged, bump);
     room.on(RoomEvent.ParticipantNameChanged, bump);
 
+    // local track changes
+    room.on(RoomEvent.LocalTrackPublished, bump);
+    room.on(RoomEvent.LocalTrackUnpublished, bump);
+    room.on(RoomEvent.TrackMuted, bump);
+    room.on(RoomEvent.TrackUnmuted, bump);
+
     return () => {
       room.off(RoomEvent.ParticipantConnected, bump);
       room.off(RoomEvent.ParticipantDisconnected, bump);
@@ -82,6 +88,11 @@ function useAllParticipants(room: Room | undefined) {
       room.off(RoomEvent.TrackUnsubscribed, bump);
       room.off(RoomEvent.ParticipantMetadataChanged, bump);
       room.off(RoomEvent.ParticipantNameChanged, bump);
+
+      room.off(RoomEvent.LocalTrackPublished, bump);
+      room.off(RoomEvent.LocalTrackUnpublished, bump);
+      room.off(RoomEvent.TrackMuted, bump);
+      room.off(RoomEvent.TrackUnmuted, bump);
     };
   }, [room]);
 
@@ -89,6 +100,47 @@ function useAllParticipants(room: Room | undefined) {
     if (!room) return [];
     return [room.localParticipant, ...Array.from(room.remoteParticipants.values())];
   }, [room, room?.localParticipant, room?.remoteParticipants.size]);
+}
+
+function getEnabledState(p: LocalParticipant, source: Track.Source) {
+  const pub = p.getTrackPublication(source);
+  if (!pub) return false;
+
+  // Publication exists but could be muted
+  // (videoTrack/audioTrack may also be null briefly)
+  const muted = (pub as any).isMuted === true;
+  return !muted;
+}
+
+function useLocalMediaState(room: Room | undefined) {
+  const [, force] = useState(0);
+
+  useEffect(() => {
+    if (!room) return;
+
+    const bump = () => force((x) => x + 1);
+
+    room.on(RoomEvent.LocalTrackPublished, bump);
+    room.on(RoomEvent.LocalTrackUnpublished, bump);
+    room.on(RoomEvent.TrackMuted, bump);
+    room.on(RoomEvent.TrackUnmuted, bump);
+    room.on(RoomEvent.ConnectionStateChanged, bump);
+
+    return () => {
+      room.off(RoomEvent.LocalTrackPublished, bump);
+      room.off(RoomEvent.LocalTrackUnpublished, bump);
+      room.off(RoomEvent.TrackMuted, bump);
+      room.off(RoomEvent.TrackUnmuted, bump);
+      room.off(RoomEvent.ConnectionStateChanged, bump);
+    };
+  }, [room]);
+
+  const lp = room?.localParticipant;
+  const camOn = lp ? getEnabledState(lp, Track.Source.Camera) : false;
+  const micOn = lp ? getEnabledState(lp, Track.Source.Microphone) : false;
+  const shareOn = lp ? getEnabledState(lp, Track.Source.ScreenShare) : false;
+
+  return { camOn, micOn, shareOn };
 }
 
 /** Attach a participant camera track to <video> if exists */
@@ -256,8 +308,111 @@ function AutoDisconnectOnUnload() {
   return null;
 }
 
+function MediaControls({ tutorId }: { tutorId?: string }) {
+  const room = useRoomContext();
+  const local = room?.localParticipant;
+  const meIsTutor = !!local && isTutor(local, tutorId);
+
+  const { camOn, micOn, shareOn } = useLocalMediaState(room);
+  const [busy, setBusy] = useState<null | "cam" | "mic" | "share">(null);
+
+  if (!meIsTutor) return null;
+
+  const btnBase: React.CSSProperties = {
+    fontFamily: UI_FONT,
+    height: 34,
+    padding: "0 10px",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    color: "white",
+    fontWeight: 800,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    userSelect: "none",
+  };
+
+  const pill = (on: boolean): React.CSSProperties => ({
+    fontSize: 11,
+    padding: "2px 8px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: on ? "rgba(120,170,255,0.18)" : "rgba(255,255,255,0.06)",
+    opacity: 0.95,
+  });
+
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <button
+        disabled={!local || busy !== null}
+        onClick={async () => {
+          if (!local) return;
+          setBusy("cam");
+          try {
+            await local.setCameraEnabled(!camOn);
+          } catch {
+          } finally {
+            setBusy(null);
+          }
+        }}
+        style={{
+          ...btnBase,
+          opacity: !local || busy !== null ? 0.55 : 1,
+        }}
+        title="Bật/Tắt camera của bạn (Tutor)"
+      >
+        📷 <span>Cam</span> <span style={pill(camOn)}>{camOn ? "On" : "Off"}</span>
+      </button>
+
+      <button
+        disabled={!local || busy !== null}
+        onClick={async () => {
+          if (!local) return;
+          setBusy("mic");
+          try {
+            await local.setMicrophoneEnabled(!micOn);
+          } catch {
+          } finally {
+            setBusy(null);
+          }
+        }}
+        style={{
+          ...btnBase,
+          opacity: !local || busy !== null ? 0.55 : 1,
+        }}
+        title="Bật/Tắt micro của bạn (Tutor)"
+      >
+        🎙️ <span>Mic</span> <span style={pill(micOn)}>{micOn ? "On" : "Off"}</span>
+      </button>
+
+      <button
+        disabled={!local || busy !== null}
+        onClick={async () => {
+          if (!local) return;
+          setBusy("share");
+          try {
+            await local.setScreenShareEnabled(!shareOn);
+          } catch {
+          } finally {
+            setBusy(null);
+          }
+        }}
+        style={{
+          ...btnBase,
+          opacity: !local || busy !== null ? 0.55 : 1,
+        }}
+        title="Share/Stop màn hình (Tutor)"
+      >
+        🖥️ <span>Share</span> <span style={pill(shareOn)}>{shareOn ? "On" : "Off"}</span>
+      </button>
+    </div>
+  );
+}
+
 /** Center board: ONLY screenshare */
-function Board() {
+function Board({ tutorId }: { tutorId?: string }) {
   const room = useRoomContext();
 
   const shareTracks = useTracks([{ source: Track.Source.ScreenShare, withPlaceholder: false }], {
@@ -286,6 +441,7 @@ function Board() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ fontWeight: 800, fontSize: 14, opacity: 0.9 }}>Board</div>
           <LeaveButton to="/app" />
+          <MediaControls tutorId={tutorId} />
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.65 }}>
@@ -326,7 +482,7 @@ function Board() {
             <div style={{ maxWidth: 520 }}>
               <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>Chưa có “bảng”</div>
               <div style={{ fontSize: 14, lineHeight: 1.6, opacity: 0.9 }}>
-                Tutor bấm <b>Share screen</b> để share slide/bảng.
+                Tutor bấm <b>Share</b> để share slide/bảng.
                 <br />
                 Khu vực này chỉ hiển thị <b>screenshare</b>, không bao giờ hiện camera.
               </div>
@@ -531,7 +687,7 @@ function MinimalClassroomUI({ tutorId }: { tutorId?: string }) {
       }}
     >
       <div style={{ padding: 12, minWidth: 0, minHeight: 0 }}>
-        <Board />
+        <Board tutorId={tutorId} />
       </div>
 
       <div
