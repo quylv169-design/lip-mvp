@@ -1,7 +1,7 @@
 // app/student/practice/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { PRACTICE_BANK } from "@/lib/practice/bank";
@@ -61,7 +61,19 @@ function buildAttemptBank(original: PracticeLessonBank): PracticeLessonBank {
   };
 }
 
+/**
+ * ✅ Next.js build (Vercel prerender) requires useSearchParams() to be used
+ * inside a component wrapped by <Suspense />.
+ */
 export default function PracticePage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 24 }}>Loading practice…</div>}>
+      <PracticeInner />
+    </Suspense>
+  );
+}
+
+function PracticeInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const lessonIdFromUrl = (searchParams.get("lessonId") || "").trim();
@@ -541,8 +553,8 @@ export default function PracticePage() {
               >
                 {lockedScore.locked ? (
                   <>
-                    🔒 <b>Điểm năng lực (đã chốt)</b>:{" "}
-                    <b>{lockedScore.correct}</b> / {lockedScore.total} (≈ <b>{lockedScore.pct}%</b>)
+                    🔒 <b>Điểm năng lực (đã chốt)</b>: <b>{lockedScore.correct}</b> / {lockedScore.total} (≈{" "}
+                    <b>{lockedScore.pct}%</b>)
                   </>
                 ) : (
                   <>
