@@ -18,7 +18,7 @@ export default function LoginPage() {
 
     try {
       if (!email || !password) {
-        setMsg("Nhập email và mật khẩu.");
+        setMsg("Vui lòng nhập email và mật khẩu.");
         return;
       }
 
@@ -37,7 +37,6 @@ export default function LoginPage() {
         return;
       }
 
-      // ✅ signup: luôn là học sinh
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -54,7 +53,6 @@ export default function LoginPage() {
         return;
       }
 
-      // ✅ tạo profile role=student
       const { error: profileErr } = await supabase.from("profiles").insert({
         id: user.id,
         role: "student",
@@ -66,7 +64,7 @@ export default function LoginPage() {
         return;
       }
 
-      setMsg("Đăng ký OK. Giờ bạn đăng nhập.");
+      setMsg("Đăng ký thành công. Giờ bạn đăng nhập nhé.");
       setMode("login");
     } finally {
       setLoading(false);
@@ -74,33 +72,48 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
-      <div className="w-full max-w-sm rounded-2xl border p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">
-          {mode === "login" ? "Đăng nhập" : "Tạo tài khoản học sinh"}
-        </h1>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 p-6">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-8">
 
-        <p className="mt-1 text-sm text-gray-500">
-          LIP MVP • Buổi 1 (Present Simple)
+        {/* Logo / Brand */}
+        <div className="text-center mb-6">
+          <h1 className="text-3xl font-extrabold tracking-tight">
+            LIP
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">
+            English Learning Platform
+          </p>
+        </div>
+
+        <h2 className="text-xl font-semibold text-center mb-1">
+          {mode === "login" ? "Đăng nhập" : "Tạo tài khoản học sinh"}
+        </h2>
+
+        <p className="text-center text-sm text-gray-500 mb-6">
+          Buổi 1 • Present Simple
         </p>
 
-        <form className="mt-6 space-y-3" onSubmit={onSubmit}>
-          {mode === "signup" ? (
+        <form className="space-y-4" onSubmit={onSubmit}>
+          {mode === "signup" && (
             <div>
-              <label className="text-sm font-medium">Tên hiển thị</label>
+              <label className="text-sm font-medium text-gray-700">
+                Tên hiển thị
+              </label>
               <input
-                className="mt-1 w-full rounded-lg border px-3 py-2"
+                className="mt-1 w-full rounded-xl border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Ví dụ: Bạn A"
               />
             </div>
-          ) : null}
+          )}
 
           <div>
-            <label className="text-sm font-medium">Email</label>
+            <label className="text-sm font-medium text-gray-700">
+              Email
+            </label>
             <input
-              className="mt-1 w-full rounded-lg border px-3 py-2"
+              className="mt-1 w-full rounded-xl border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -110,9 +123,11 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="text-sm font-medium">Mật khẩu</label>
+            <label className="text-sm font-medium text-gray-700">
+              Mật khẩu
+            </label>
             <input
-              className="mt-1 w-full rounded-lg border px-3 py-2"
+              className="mt-1 w-full rounded-xl border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -123,15 +138,15 @@ export default function LoginPage() {
             />
           </div>
 
-          {msg ? (
-            <div className="rounded-lg bg-gray-50 border px-3 py-2 text-sm">
+          {msg && (
+            <div className="rounded-xl bg-gray-100 border border-gray-200 px-4 py-3 text-sm text-gray-700">
               {msg}
             </div>
-          ) : null}
+          )}
 
           <button
             disabled={loading}
-            className="w-full rounded-lg bg-black text-white py-2 font-medium disabled:opacity-60"
+            className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 transition text-white py-2.5 font-semibold disabled:opacity-60"
           >
             {loading
               ? "Đang xử lý..."
@@ -142,14 +157,14 @@ export default function LoginPage() {
         </form>
 
         <button
-          className="mt-4 w-full text-sm text-gray-600 underline"
+          className="mt-5 w-full text-sm text-indigo-600 hover:underline"
           onClick={() => {
             setMsg(null);
             setMode(mode === "login" ? "signup" : "login");
           }}
         >
           {mode === "login"
-            ? "Chưa có tài khoản? Đăng ký học sinh"
+            ? "Chưa có tài khoản? Đăng ký ngay"
             : "Đã có tài khoản? Đăng nhập"}
         </button>
       </div>
