@@ -17,6 +17,7 @@ import {
   RoomEvent,
   Participant,
   LocalParticipant,
+  TrackPublication,
 } from "livekit-client";
 
 type Props = { classId: string };
@@ -45,8 +46,20 @@ function labelOf(p: Participant) {
   return (p.name && p.name.trim()) || p.identity || "user";
 }
 
-function isTutor(p: Participant, tutorId?: string) {
-  return !!tutorId && p.identity === tutorId;
+function safeParseRole(p: Participant): string | null {
+  try {
+    const raw = (p as any)?.metadata;
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return typeof obj?.role === "string" ? obj.role : null;
+  } catch {
+    return null;
+  }
+}
+
+function isTutorByRole(p: Participant) {
+  const r = safeParseRole(p);
+  return r === "tutor";
 }
 
 /**
@@ -107,7 +120,6 @@ function getEnabledState(p: LocalParticipant, source: Track.Source) {
   if (!pub) return false;
 
   // Publication exists but could be muted
-  // (videoTrack/audioTrack may also be null briefly)
   const muted = (pub as any).isMuted === true;
   return !muted;
 }
@@ -143,22 +155,28 @@ function useLocalMediaState(room: Room | undefined) {
   return { camOn, micOn, shareOn };
 }
 
-/** Attach a participant camera track to <video> if exists */
-function CameraTile({ participant, tutorId }: { participant: Participant; tutorId?: string }) {
+/**
+ * Camera tile using LiveKit track publication object.
+ * This is more stable for LocalParticipant (student seeing own camera).
+ */
+function CameraTileByPub({
+  participant,
+  publication,
+}: {
+  participant: Participant;
+  publication?: TrackPublication;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const name = labelOf(participant);
-  const role = isTutor(participant, tutorId) ? "Tutor" : "Student";
-
-  const pub = participant.getTrackPublication(Track.Source.Camera);
-  const camTrack = pub?.videoTrack;
+  const camTrack = publication?.videoTrack;
   const hasCam = !!camTrack;
 
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    if (!camTrack) return;
 
+    if (!camTrack) return;
     camTrack.attach(el);
+
     return () => {
       camTrack.detach(el);
     };
@@ -218,42 +236,48 @@ function CameraTile({ participant, tutorId }: { participant: Participant; tutorI
           />
         </div>
       )}
+    </div>
+  );
+}
 
+/** Overlay (name + role) reused */
+function TileFooter({ participant }: { participant: Participant }) {
+  const name = labelOf(participant);
+  const role = isTutorByRole(participant) ? "Tutor" : "Student";
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 10,
+        bottom: 10,
+        right: 10,
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 8,
+        alignItems: "center",
+        padding: "6px 8px",
+        borderRadius: 12,
+        background: "rgba(0,0,0,0.55)",
+        border: "1px solid rgba(255,255,255,0.12)",
+        fontSize: 12,
+      }}
+    >
+      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
       <div
         style={{
-          position: "absolute",
-          left: 10,
-          bottom: 10,
-          right: 10,
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 8,
-          alignItems: "center",
-          padding: "6px 8px",
-          borderRadius: 12,
-          background: "rgba(0,0,0,0.55)",
-          border: "1px solid rgba(255,255,255,0.12)",
-          fontSize: 12,
+          fontSize: 11,
+          padding: "2px 8px",
+          borderRadius: 999,
+          border: "1px solid rgba(255,255,255,0.14)",
+          background: isTutorByRole(participant)
+            ? "rgba(120,170,255,0.12)"
+            : "rgba(255,255,255,0.06)",
+          opacity: 0.95,
+          flex: "none",
         }}
       >
-        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {name}
-        </div>
-        <div
-          style={{
-            fontSize: 11,
-            padding: "2px 8px",
-            borderRadius: 999,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: isTutor(participant, tutorId)
-              ? "rgba(120,170,255,0.12)"
-              : "rgba(255,255,255,0.06)",
-            opacity: 0.95,
-            flex: "none",
-          }}
-        >
-          {role}
-        </div>
+        {role}
       </div>
     </div>
   );
@@ -308,10 +332,11 @@ function AutoDisconnectOnUnload() {
   return null;
 }
 
-function MediaControls({ tutorId }: { tutorId?: string }) {
+function MediaControls() {
   const room = useRoomContext();
   const local = room?.localParticipant;
-  const meIsTutor = !!local && isTutor(local, tutorId);
+
+  const meIsTutor = !!local && isTutorByRole(local);
 
   const { camOn, micOn, shareOn } = useLocalMediaState(room);
   const [busy, setBusy] = useState<null | "cam" | "mic" | "share">(null);
@@ -352,7 +377,6 @@ function MediaControls({ tutorId }: { tutorId?: string }) {
           setBusy("cam");
           try {
             await local.setCameraEnabled(!camOn);
-          } catch {
           } finally {
             setBusy(null);
           }
@@ -373,7 +397,6 @@ function MediaControls({ tutorId }: { tutorId?: string }) {
           setBusy("mic");
           try {
             await local.setMicrophoneEnabled(!micOn);
-          } catch {
           } finally {
             setBusy(null);
           }
@@ -394,7 +417,6 @@ function MediaControls({ tutorId }: { tutorId?: string }) {
           setBusy("share");
           try {
             await local.setScreenShareEnabled(!shareOn);
-          } catch {
           } finally {
             setBusy(null);
           }
@@ -412,7 +434,7 @@ function MediaControls({ tutorId }: { tutorId?: string }) {
 }
 
 /** Center board: ONLY screenshare */
-function Board({ tutorId }: { tutorId?: string }) {
+function Board() {
   const room = useRoomContext();
 
   const shareTracks = useTracks([{ source: Track.Source.ScreenShare, withPlaceholder: false }], {
@@ -441,7 +463,7 @@ function Board({ tutorId }: { tutorId?: string }) {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ fontWeight: 800, fontSize: 14, opacity: 0.9 }}>Board</div>
           <LeaveButton to="/app" />
-          <MediaControls tutorId={tutorId} />
+          <MediaControls />
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.65 }}>
@@ -540,24 +562,39 @@ function useSimpleChat(room: Room | undefined) {
   return { messages, text, setText, send };
 }
 
-function RightColumn({ tutorId }: { tutorId?: string }) {
+function RightColumn() {
   const room = useRoomContext();
   const { messages, text, setText, send } = useSimpleChat(room);
+
+  // Stable camera publications (includes local + remote)
+  const camTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: false }], {
+    onlySubscribed: false,
+  });
 
   const all = useAllParticipants(room);
 
   const top3 = useMemo(() => {
     const sorted = [...all].sort((a, b) => {
-      const aIsTutor = isTutor(a, tutorId);
-      const bIsTutor = isTutor(b, tutorId);
+      const aIsTutor = isTutorByRole(a);
+      const bIsTutor = isTutorByRole(b);
       if (aIsTutor === bIsTutor) return 0;
       return aIsTutor ? -1 : 1;
     });
     return sorted.slice(0, 3);
-  }, [all, tutorId]);
+  }, [all]);
 
   const tiles: Array<Participant | null> = [...top3];
   while (tiles.length < 3) tiles.push(null);
+
+  const pubByIdentity = useMemo(() => {
+    const m = new Map<string, TrackPublication>();
+    for (const t of camTracks) {
+      const p = t.participant;
+      const pub = t.publication as TrackPublication;
+      if (p?.identity) m.set(p.identity, pub);
+    }
+    return m;
+  }, [camTracks]);
 
   return (
     <div
@@ -577,8 +614,9 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
           {tiles.map((p, idx) =>
             p ? (
-              <div key={p.identity} style={{ height: 110 }}>
-                <CameraTile participant={p} tutorId={tutorId} />
+              <div key={p.identity} style={{ height: 110, position: "relative" }}>
+                <CameraTileByPub participant={p} publication={pubByIdentity.get(p.identity)} />
+                <TileFooter participant={p} />
               </div>
             ) : (
               <div
@@ -671,7 +709,7 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
   );
 }
 
-function MinimalClassroomUI({ tutorId }: { tutorId?: string }) {
+function MinimalClassroomUI() {
   return (
     <div
       style={{
@@ -687,7 +725,7 @@ function MinimalClassroomUI({ tutorId }: { tutorId?: string }) {
       }}
     >
       <div style={{ padding: 12, minWidth: 0, minHeight: 0 }}>
-        <Board tutorId={tutorId} />
+        <Board />
       </div>
 
       <div
@@ -698,7 +736,7 @@ function MinimalClassroomUI({ tutorId }: { tutorId?: string }) {
           overflow: "hidden",
         }}
       >
-        <RightColumn tutorId={tutorId} />
+        <RightColumn />
       </div>
     </div>
   );
@@ -774,7 +812,7 @@ export default function ClassroomClient({ classId }: Props) {
     >
       <RoomAudioRenderer />
       <AutoDisconnectOnUnload />
-      <MinimalClassroomUI tutorId={info?.tutorId} />
+      <MinimalClassroomUI />
     </LiveKitRoom>
   );
 }
