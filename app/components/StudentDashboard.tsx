@@ -1282,7 +1282,7 @@ export default function StudentDashboard() {
             </div>
 
             {joinMsg ? (
-              <div style={{ ...styles.tiny, color: joinMsg.startsWith("✅") ? "rgba(170,255,210,0.95)" : "var(--lip-error, #ffb4b4)" }}>
+              <div style={{ ...styles.tiny, color: joinMsg.startsWith("✅") ? "rgba(170,255,210,0.95)" : "var(--lip-error, #0F5132)" }}>
                 {joinMsg}
               </div>
             ) : null}
