@@ -64,14 +64,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
 
+    const isTutor = klass.tutor_id === userId; // ✅ SOURCE OF TRUTH
+    const isAdmin = String((profile as any).role || "") === "admin";
+
     let allowed = false;
 
-    // tutor is allowed if owns this class
-    if (profile.role === "tutor" && klass.tutor_id === userId) {
-      allowed = true;
-    }
+    // Admin always allowed (optional but sane)
+    if (isAdmin) allowed = true;
 
-    // student is allowed if exists in class_members
+    // Tutor allowed if owns this class (SOURCE OF TRUTH)
+    if (!allowed && isTutor) allowed = true;
+
+    // Student allowed if exists in class_members
     if (!allowed) {
       const { data: member, error: memberErr } = await supabase
         .from("class_members")
@@ -91,16 +95,25 @@ export async function POST(req: Request) {
     const roomName = `class_${classId}`;
 
     const fullName =
-      typeof profile.full_name === "string" && profile.full_name.trim()
-        ? profile.full_name.trim()
+      typeof (profile as any).full_name === "string" && (profile as any).full_name.trim()
+        ? (profile as any).full_name.trim()
         : userId;
+
+    // ✅ role written into metadata is now stable:
+    // - tutor is based on classes.tutor_id (NOT profiles.role)
+    // - admin stays admin
+    // - otherwise student
+    const stableRole: "admin" | "tutor" | "student" = isAdmin ? "admin" : isTutor ? "tutor" : "student";
 
     const at = new AccessToken(getEnv("LIVEKIT_API_KEY"), getEnv("LIVEKIT_API_SECRET"), {
       identity: userId,
-      name: fullName, // ✅ this is what shows on UI as participant.name
+      name: fullName,
       metadata: JSON.stringify({
-        role: profile.role,
+        role: stableRole,
         full_name: fullName,
+        // helpful debug fields
+        tutor_id: klass.tutor_id,
+        class_id: classId,
       }),
     });
 
@@ -119,6 +132,8 @@ export async function POST(req: Request) {
       roomName,
       identity: userId,
       tutorId: klass.tutor_id,
+      isTutor, // ✅ client can trust this
+      role: stableRole,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
