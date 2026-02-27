@@ -432,43 +432,8 @@ type SlideStateMsg = {
 /** Center board: Slide presenter (Tutor controls, students follow) */
 function Board({ classId }: { classId: string }) {
   const room = useRoomContext();
-
-  /**
-   * IMPORTANT:
-   * LiveKit may set localParticipant.metadata AFTER the component first renders.
-   * If we only compute role once, UI can get stuck in "student" mode (no Present button),
-   * even though the People list later shows correct role.
-   *
-   * => We force a rerender when metadata changes.
-   */
-  const [roleTick, setRoleTick] = useState(0);
-
-  useEffect(() => {
-    if (!room) return;
-
-    const bump = () => setRoleTick((x) => x + 1);
-
-    room.on(RoomEvent.ParticipantMetadataChanged, bump);
-    room.on(RoomEvent.ParticipantNameChanged, bump);
-    room.on(RoomEvent.ConnectionStateChanged, bump);
-    room.on(RoomEvent.ParticipantConnected, bump);
-    room.on(RoomEvent.ParticipantDisconnected, bump);
-
-    return () => {
-      room.off(RoomEvent.ParticipantMetadataChanged, bump);
-      room.off(RoomEvent.ParticipantNameChanged, bump);
-      room.off(RoomEvent.ConnectionStateChanged, bump);
-      room.off(RoomEvent.ParticipantConnected, bump);
-      room.off(RoomEvent.ParticipantDisconnected, bump);
-    };
-  }, [room]);
-
-  const meIsTutor = useMemo(() => {
-    const local = room?.localParticipant;
-    if (!local) return false;
-    return isTutorByRole(local);
-    // roleTick forces recompute after metadata sync
-  }, [room, roleTick]);
+  const local = room?.localParticipant;
+  const meIsTutor = !!local && isTutorByRole(local);
 
   const btnBase: React.CSSProperties = {
     fontFamily: UI_FONT,
@@ -520,11 +485,12 @@ function Board({ classId }: { classId: string }) {
         .order("order_index", { ascending: true });
 
       if (error) {
-        console.error(error);
+        console.error("[Board] fetch lessons error:", error);
         setLessons([]);
         return;
       }
       setLessons((data as LessonRow[]) || []);
+
       // auto pick first lesson if empty
       if (!selectedLessonId && data && data.length > 0) {
         setSelectedLessonId((data[0] as any).id);
@@ -536,22 +502,45 @@ function Board({ classId }: { classId: string }) {
 
   async function fetchSignedUrl(lessonId: string) {
     if (!lessonId) return "";
+
+    // ✅ IMPORTANT: use Bearer token like /api/livekit-token
+    const { data: sess } = await supabase.auth.getSession();
+    const accessToken = sess.session?.access_token;
+
+    if (!accessToken) {
+      console.error("[Board] Missing access_token. User not logged in?");
+      return "";
+    }
+
     try {
       const res = await fetch(
         `/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`,
         {
           method: "GET",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
         }
       );
-      const json = await res.json();
+
+      const json = await res.json().catch(() => ({} as any));
+
       if (!res.ok) {
-        console.error(json?.error || "Failed to get signed url");
+        console.error(
+          "[Board] lesson-slide-signed-url failed:",
+          res.status,
+          json?.error || json
+        );
         return "";
       }
+
       const url = String(json?.signedUrl || "");
+      if (!url) {
+        console.error("[Board] signedUrl is empty. Response:", json);
+      }
       return url;
     } catch (e) {
-      console.error(e);
+      console.error("[Board] fetchSignedUrl exception:", e);
       return "";
     }
   }
@@ -661,23 +650,8 @@ function Board({ classId }: { classId: string }) {
   const hasSlide = !!slideUrl;
 
   return (
-    <div
-      style={{
-        height: "100%",
-        minHeight: 0,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-        }}
-      >
+    <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div style={{ fontWeight: 800, fontSize: 14, opacity: 0.9 }}>Board</div>
           <LeaveButton to="/app" />
@@ -694,7 +668,6 @@ function Board({ classId }: { classId: string }) {
                 const v = e.target.value;
                 setSelectedLessonId(v);
                 setPage(1);
-                // If presenting, broadcast will happen via effect
               }}
               style={{
                 fontFamily: UI_FONT,
@@ -710,7 +683,9 @@ function Board({ classId }: { classId: string }) {
               title={canControl ? "Chọn lesson để trình chiếu" : "Chỉ tutor mới được chọn lesson"}
             >
               {lessons.length === 0 ? (
-                <option value="">{lessonLoading ? "Loading lessons..." : "No lessons"}</option>
+                <option value="">
+                  {lessonLoading ? "Loading lessons..." : "No lessons"}
+                </option>
               ) : (
                 lessons.map((l) => (
                   <option key={l.id} value={l.id}>
@@ -928,9 +903,7 @@ function useSimpleChat(room: Room | undefined) {
         setMessages((prev) => [
           ...prev,
           {
-            id: `${msg.ts}-${participant?.identity ?? "unknown"}-${Math.random()
-              .toString(16)
-              .slice(2)}`,
+            id: `${msg.ts}-${participant?.identity ?? "unknown"}-${Math.random().toString(16).slice(2)}`,
             ts: msg.ts,
             from: participant ? labelOf(participant) : "system",
             text: msg.t,
