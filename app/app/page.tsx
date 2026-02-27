@@ -1,3 +1,4 @@
+// app/app/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -6,7 +7,7 @@ import { useRouter } from "next/navigation";
 import TutorDashboard from "@/app/components/TutorDashboard";
 import StudentDashboard from "@/app/components/StudentDashboard";
 
-type Role = "student" | "tutor" | null;
+type Role = "student" | "tutor" | "admin" | null;
 
 export default function AppPage() {
   const router = useRouter();
@@ -42,6 +43,11 @@ export default function AppPage() {
       const r = (profile?.role ?? null) as Role;
       setRole(r);
       setLoading(false);
+
+      // ✅ Admin: send to admin dashboard
+      if (r === "admin") {
+        router.replace("/admin");
+      }
     };
 
     loadUser();
@@ -84,16 +90,17 @@ export default function AppPage() {
       >
         Không tìm thấy role trong profiles.
         <br />
-        (Check profiles.role = "student" hoặc "tutor")
+        (Check profiles.role = "student" / "tutor" / "admin")
       </div>
     );
   }
 
-  // ✅ Full-bleed container: không bọc thêm UI, không thêm nút Logout ở đây nữa
+  // ✅ Full-bleed container
   return (
     <div style={fullBleedStyle}>
       {role === "student" ? <StudentDashboard /> : null}
       {role === "tutor" ? <TutorDashboard /> : null}
+      {/* role === "admin" đã router.replace("/admin") ở trên */}
     </div>
   );
 }

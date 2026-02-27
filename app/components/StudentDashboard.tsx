@@ -30,6 +30,8 @@ type LessonRow = {
   class_id: string;
   title: string;
   order_index: number;
+  slide_path?: string | null;
+  slide_updated_at?: string | null;
   created_at?: string | null;
 };
 
@@ -71,6 +73,9 @@ type LessonVM = {
   title: string; // cleaned title
   rawTitle: string; // original from DB (for debugging if needed)
   order: number;
+
+  slidePath: string | null;
+  slideUpdatedAt: string | null;
 
   prelearningDone: boolean;
   practiceDone: boolean;
@@ -213,6 +218,13 @@ export default function StudentDashboard() {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState("");
 
+  // Slide modal
+  const [slideOpen, setSlideOpen] = useState(false);
+  const [slideLesson, setSlideLesson] = useState<LessonVM | null>(null);
+  const [slideLoading, setSlideLoading] = useState(false);
+  const [slideErr, setSlideErr] = useState("");
+  const [slideUrl, setSlideUrl] = useState<string>("");
+
   // Vocabulary snapshot (MVP placeholder)
   const [vocabTotal] = useState(0);
   const [vocabMasteredPct] = useState(0);
@@ -223,6 +235,43 @@ export default function StudentDashboard() {
     const id = setInterval(() => setNowTick(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  async function fetchSlideSignedUrl(lessonId: string) {
+    setSlideLoading(true);
+    setSlideErr("");
+    setSlideUrl("");
+
+    try {
+      const { data: auth } = await supabase.auth.getSession();
+      const accessToken = auth.session?.access_token;
+      if (!accessToken) {
+        setSlideErr("Bạn đã đăng xuất. Vui lòng đăng nhập lại.");
+        return;
+      }
+
+      const res = await fetch(`/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        setSlideErr(json?.error || "Không lấy được signed URL");
+        return;
+      }
+
+      if (!json?.url) {
+        setSlideErr("API không trả về url.");
+        return;
+      }
+
+      setSlideUrl(String(json.url));
+    } catch (e: any) {
+      setSlideErr(e?.message || "Lỗi không xác định");
+    } finally {
+      setSlideLoading(false);
+    }
+  }
 
   // ----- AUTH + LOAD CLASSES -----
   useEffect(() => {
@@ -364,7 +413,7 @@ export default function StudentDashboard() {
 
       const { data: lessonRows, error: lessonErr } = await supabase
         .from("lessons")
-        .select("id,class_id,title,order_index,created_at")
+        .select("id,class_id,title,order_index,slide_path,slide_updated_at,created_at")
         .eq("class_id", activeClassId)
         .order("order_index", { ascending: true });
 
@@ -378,6 +427,8 @@ export default function StudentDashboard() {
       const lessonList = ((lessonRows as LessonRow[]) ?? []).map((l) => ({
         ...l,
         title: String(l.title ?? ""),
+        slide_path: (l as any).slide_path ?? null,
+        slide_updated_at: (l as any).slide_updated_at ?? null,
       }));
 
       const lessonIds = lessonList.map((l) => l.id);
@@ -436,6 +487,9 @@ export default function StudentDashboard() {
           rawTitle: l.title,
           title: cleanedTitle || l.title,
           order: l.order_index,
+
+          slidePath: (l.slide_path as any) ?? null,
+          slideUpdatedAt: (l.slide_updated_at as any) ?? null,
 
           prelearningDone: !!latestPre,
           practiceDone: !!latestPrac,
@@ -723,14 +777,14 @@ export default function StudentDashboard() {
     };
   }
 
-  function tickBadge(done: boolean, label: string, sub?: string): React.CSSProperties {
+  function tickBadge(done: boolean): React.CSSProperties {
     return {
       display: "inline-flex",
       alignItems: "center",
       gap: 6,
       fontSize: 11,
       fontWeight: 900,
-      padding: sub ? "6px 10px" : "6px 10px",
+      padding: "6px 10px",
       borderRadius: 999,
       border: done
         ? "1px solid var(--lip-success-border, rgba(120,255,190,0.45))"
@@ -814,8 +868,8 @@ export default function StudentDashboard() {
           <div style={styles.legendRow}>
             <div style={{ opacity: 0.78 }}>Chọn lesson để mở menu</div>
             <div style={styles.legendRight}>
-              <div style={styles.legendCol}>Prelearning</div>
-              <div style={styles.legendCol}>Luyện tập</div>
+              <div style={{ fontWeight: 950, opacity: 0.92 }}>Prelearning</div>
+              <div style={{ fontWeight: 950, opacity: 0.92 }}>Luyện tập</div>
             </div>
           </div>
 
@@ -845,12 +899,12 @@ export default function StudentDashboard() {
                       </div>
 
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
-                        <div style={tickBadge(l.prelearningDone, "Pre")}>
+                        <div style={tickBadge(l.prelearningDone)}>
                           <span>{l.prelearningDone ? "✅" : "⬜"}</span>
                           <span>Pre</span>
                         </div>
 
-                        <div style={tickBadge(l.practiceDone, "Prac")}>
+                        <div style={tickBadge(l.practiceDone)}>
                           <span>{l.practiceDone ? "✅" : "⬜"}</span>
                           <span>Prac</span>
                           {l.practiceDone && pracScoreText ? <span style={{ opacity: 0.9, fontWeight: 950 }}>• {pracScoreText}</span> : null}
@@ -865,7 +919,7 @@ export default function StudentDashboard() {
                             <span>📚</span>
                             <span>Tài liệu học tập</span>
                           </span>
-                          <span style={styles.chevron}>›</span>
+                          <span style={{ opacity: 0.6, fontWeight: 950 }}>›</span>
                         </button>
 
                         <button style={menuItem(lessonTab === "prelearning")} onClick={() => setLessonTab("prelearning")}>
@@ -873,7 +927,7 @@ export default function StudentDashboard() {
                             <span>✅</span>
                             <span>Prelearning Activities</span>
                           </span>
-                          <span style={styles.chevron}>›</span>
+                          <span style={{ opacity: 0.6, fontWeight: 950 }}>›</span>
                         </button>
 
                         <button style={menuItem(lessonTab === "practice")} onClick={() => setLessonTab("practice")}>
@@ -881,7 +935,7 @@ export default function StudentDashboard() {
                             <span>🎯</span>
                             <span>Luyện tập</span>
                           </span>
-                          <span style={styles.chevron}>›</span>
+                          <span style={{ opacity: 0.6, fontWeight: 950 }}>›</span>
                         </button>
 
                         <div style={styles.divider} />
@@ -889,12 +943,37 @@ export default function StudentDashboard() {
                         {lessonTab === "materials" ? (
                           <div style={styles.cardMini}>
                             <div style={{ fontWeight: 950, fontSize: 13 }}>Slide bài giảng</div>
-                            <div style={styles.tiny}>MVP: Tutor sẽ upload slide theo lesson. Khi có slide, bấm “Xem slide”.</div>
-                            <div style={styles.btnRow}>
-                              <button style={styles.btn} onClick={() => alert("MVP: chưa có slide. Sau này sẽ link tới slide tutor upload.")}>
-                                Xem slide →
-                              </button>
-                            </div>
+
+                            {!l.slidePath ? (
+                              <div style={styles.muted}>
+                                Lesson này chưa có slide.
+                                <br />
+                                (Admin upload slide xong sẽ hiện nút “Xem slide”.)
+                              </div>
+                            ) : (
+                              <>
+                                <div style={styles.tiny}>
+                                  Updated: <span style={{ opacity: 0.9 }}>{l.slideUpdatedAt ? safeDate(l.slideUpdatedAt) : "-"}</span>
+                                </div>
+
+                                <div style={styles.btnRow}>
+                                  <button
+                                    style={styles.btnPrimary}
+                                    onClick={async () => {
+                                      setSlideLesson(l);
+                                      setSlideOpen(true);
+                                      await fetchSlideSignedUrl(l.id);
+                                    }}
+                                  >
+                                    Xem slide →
+                                  </button>
+                                </div>
+
+                                <div style={styles.tiny} title={l.slidePath}>
+                                  slide_path: <span style={{ opacity: 0.85 }}>{l.slidePath}</span>
+                                </div>
+                              </>
+                            )}
                           </div>
                         ) : null}
 
@@ -1097,7 +1176,6 @@ export default function StudentDashboard() {
             </div>
           </div>
 
-          {/* ✅ FIX: bỏ alert, chuyển sang route thật */}
           <div style={styles.btnRow}>
             <Link href="/student/vocabulary" style={styles.btnPrimary as any}>
               Open My Vocabulary →
@@ -1184,6 +1262,81 @@ export default function StudentDashboard() {
           }
         }
       `}</style>
+
+      {/* Slide modal */}
+      {slideOpen && slideLesson ? (
+        <div
+          style={styles.modalOverlay}
+          onClick={() => {
+            setSlideOpen(false);
+            setSlideLesson(null);
+            setSlideUrl("");
+            setSlideErr("");
+            setSlideLoading(false);
+          }}
+        >
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+              <div style={{ fontWeight: 950, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis" }}>
+                Lesson {slideLesson.order}: {slideLesson.title} — Slide
+              </div>
+              <button
+                style={styles.btnGhost}
+                onClick={() => {
+                  setSlideOpen(false);
+                  setSlideLesson(null);
+                  setSlideUrl("");
+                  setSlideErr("");
+                  setSlideLoading(false);
+                }}
+              >
+                Close
+              </button>
+            </div>
+
+            <div style={styles.cardMini}>
+              <div style={styles.tiny}>
+                Updated: <span style={{ opacity: 0.9 }}>{slideLesson.slideUpdatedAt ? safeDate(slideLesson.slideUpdatedAt) : "-"}</span>
+              </div>
+
+              {slideLoading ? <div style={styles.muted}>Đang tải slide…</div> : null}
+              {slideErr ? <div style={{ ...styles.muted, color: "var(--lip-error, #ffb4b4)" }}>Error: {slideErr}</div> : null}
+
+              {!slideLoading && !slideErr && slideUrl ? (
+                <div
+                  style={{
+                    height: "70vh",
+                    borderRadius: 14,
+                    overflow: "hidden",
+                    border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
+                    background: "rgba(0,0,0,0.25)",
+                  }}
+                >
+                  <iframe
+                    src={slideUrl}
+                    title="Lesson slide"
+                    style={{ width: "100%", height: "100%", border: "none" }}
+                    allow="fullscreen"
+                  />
+                </div>
+              ) : null}
+
+              {!slideLoading && !slideErr && !slideUrl ? (
+                <div style={styles.btnRow}>
+                  <button
+                    style={styles.btn}
+                    onClick={async () => {
+                      await fetchSlideSignedUrl(slideLesson.id);
+                    }}
+                  >
+                    Tải lại →
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Prelearning detail modal */}
       {detailOpen && detailLesson ? (

@@ -1,3 +1,4 @@
+// app/components/TutorDashboard.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -59,6 +60,11 @@ export default function TutorDashboard() {
     await fetchClasses();
   }
 
+  async function logout() {
+    await supabase.auth.signOut();
+    router.push("/login");
+  }
+
   useEffect(() => {
     (async () => {
       await fetchClasses();
@@ -70,9 +76,27 @@ export default function TutorDashboard() {
 
   return (
     <div style={{ marginTop: 20 }}>
-      <h2>👨‍🏫 Tutor Dashboard</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h2>👨‍🏫 Tutor Dashboard</h2>
+          <p>Quản lý lớp học bạn phụ trách.</p>
+        </div>
 
-            <p>Quản lý lớp học bạn phụ trách.</p>
+        <button
+          onClick={logout}
+          style={{
+            padding: "8px 12px",
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            background: "white",
+            cursor: "pointer",
+            fontWeight: 700,
+          }}
+          title="Đăng xuất"
+        >
+          Logout
+        </button>
+      </div>
 
       <div style={{ marginTop: 12 }}>
         <input
@@ -117,9 +141,7 @@ export default function TutorDashboard() {
                 {c.name}
               </div>
 
-              <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
-                {c.id}
-              </div>
+              <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>{c.id}</div>
 
               <div style={{ marginTop: 8 }}>
                 <span style={{ fontSize: 12, opacity: 0.8 }}>JOIN CODE: </span>
