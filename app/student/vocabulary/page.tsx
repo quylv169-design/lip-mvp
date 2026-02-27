@@ -481,7 +481,7 @@ export default function VocabularyPage() {
     writeLocalCache(storedWords, mastery);
   }, [storedWords, mastery, hydrated, userId]);
 
-  // ---------- Cooldown state ----------
+  // ---------- Cooldown state (now used ONLY for "graded submit") ----------
   const [cooldownLeftMs, setCooldownLeftMs] = useState<number>(0);
   const [lastSubmitMs, setLastSubmitMs] = useState<number>(0);
 
@@ -944,12 +944,16 @@ export default function VocabularyPage() {
 
   const [accent, setAccent] = useState<"en-US" | "en-GB">("en-US");
 
-  const canStartQuiz = totalQuizItems > 0 && cooldownLeftMs <= 0;
+  // ✅ Start is always allowed (as long as there are quiz items)
+  const canStartQuiz = totalQuizItems > 0;
 
   const [quizStarted, setQuizStarted] = useState(false);
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [quizResult, setQuizResult] = useState<{ correct: number; total: number } | null>(null);
+
+  // ✅ New: whether this attempt is a "graded submit" (saved to system)
+  const [isGradedAttempt, setIsGradedAttempt] = useState<boolean>(false);
 
   // open question panel by sense (word+pos)
   const [openQKey, setOpenQKey] = useState<string | null>(null);
@@ -981,6 +985,11 @@ export default function VocabularyPage() {
 
   function startQuiz() {
     if (!canStartQuiz) return;
+
+    // ✅ If cooldown is over => this attempt will be counted/saved.
+    // If not => student can still practice immediately, but result won't be saved.
+    const graded = cooldownLeftMs <= 0;
+    setIsGradedAttempt(graded);
 
     const qs = buildQuizAttempt();
     setQuizQuestions(qs);
@@ -1024,8 +1033,12 @@ export default function VocabularyPage() {
     setQuizSubmitted(true);
     setQuizResult({ correct, total });
 
-    // Update mastery per WORD:
-    // A word is "mastered" if ALL its senses are answered correctly in this attempt.
+    // ✅ Practice mode: still show correct/wrong, but DO NOT save mastery / DO NOT lock 24h again.
+    if (!isGradedAttempt) {
+      return;
+    }
+
+    // ✅ Graded mode: Update mastery per WORD + lock 24h
     const byWord = new Map<string, QuizQuestion[]>();
     finalized.forEach((q) => {
       const arr = byWord.get(q.wordId) ?? [];
@@ -1043,7 +1056,7 @@ export default function VocabularyPage() {
       return next;
     });
 
-    // lock 24h
+    // lock 24h for NEXT graded submit
     setLastSubmitMs(now);
     if (typeof window !== "undefined") window.localStorage.setItem(lsKey(LS_LAST_SUBMIT_KEY), String(now));
 
@@ -1330,11 +1343,12 @@ export default function VocabularyPage() {
       <div style={styles.card}>
         <div style={styles.titleRow}>
           <div style={styles.cardTitle}>Vocabulary Practice / Ôn luyện từ vựng</div>
-          <div style={styles.pill}>24h lock</div>
+          <div style={styles.pill}>24h graded</div>
         </div>
 
         <div style={styles.muted}>
-          - Chỉ <b>chốt đúng/sai</b> sau khi bấm <b>Submit</b>.<br />- Làm lại sau <b>24h</b>. Câu bỏ trống tính sai.
+          - Bạn có thể <b>làm lại ngay</b> để luyện tập.<br />
+          - Hệ thống chỉ <b>chấm điểm & lưu</b> tối đa <b>1 lần / 24h</b> để tránh cheat.<br />- Câu bỏ trống tính sai.
         </div>
 
         <div style={styles.rowTop}>
@@ -1379,9 +1393,11 @@ export default function VocabularyPage() {
 
         {cooldownLeftMs > 0 ? (
           <div style={styles.muted}>
-            ⏳ Chưa thể làm lại. Còn: <b>{cooldownText}</b>
+            ⏳ Lần <b>chấm điểm & lưu</b> tiếp theo sau: <b>{cooldownText}</b> (bạn vẫn có thể luyện tập ngay).
           </div>
-        ) : null}
+        ) : (
+          <div style={styles.muted}>✅ Hiện tại <b>có thể chấm điểm & lưu</b> cho lần nộp bài này.</div>
+        )}
 
         <div style={styles.btnRow}>
           <button style={{ ...styles.btnPrimary, opacity: canStartQuiz ? 1 : 0.5 }} onClick={startQuiz} disabled={!canStartQuiz}>
@@ -1399,8 +1415,18 @@ export default function VocabularyPage() {
 
         {quizResult ? (
           <div style={styles.muted}>
-            Kết quả: <b>{quizResult.correct}</b>/<b>{quizResult.total}</b> câu đúng. &nbsp;•&nbsp; Đã ghi nhớ:{" "}
-            <b>{masteredWords}</b>/<b>{totalWords}</b> từ.
+            Kết quả: <b>{quizResult.correct}</b>/<b>{quizResult.total}</b> câu đúng. &nbsp;•&nbsp;{" "}
+            {quizSubmitted ? (
+              isGradedAttempt ? (
+                <>
+                  <b>Đã lưu ✓</b> &nbsp;•&nbsp; Đã ghi nhớ: <b>{masteredWords}</b>/<b>{totalWords}</b> từ.
+                </>
+              ) : (
+                <>
+                  <b>Chỉ luyện tập (không lưu)</b> &nbsp;•&nbsp; Bạn có thể bấm <b>Start</b> để làm lại ngay.
+                </>
+              )
+            ) : null}
           </div>
         ) : null}
 
