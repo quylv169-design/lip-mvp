@@ -27,7 +27,7 @@ type TokenInfo = {
   roomName: string;
   token: string;
   tutorId?: string;
-  identity?: string;
+  identity?: string; // ✅ my userId from API
 };
 
 type ChatMsg = {
@@ -51,7 +51,6 @@ const UI_FONT =
   'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"';
 
 function labelOf(p: Participant) {
-  // IMPORTANT: full name comes from token "name"
   return (p.name && p.name.trim()) || p.identity || "user";
 }
 
@@ -67,11 +66,29 @@ function safeParseRole(p: Participant): string | null {
 }
 
 function isTutorByRole(p: Participant) {
-  const r = safeParseRole(p);
-  return r === "tutor";
+  return safeParseRole(p) === "tutor";
 }
 
-// ✅ Robust tutor check: role OR identity matches tutorId from server
+// ✅ robust tutor check: prefer server truth (myIdentity vs tutorId), fallback to LK metadata/identity
+function computeMeIsTutor(opts: {
+  myIdentity?: string;
+  tutorId?: string;
+  local?: Participant | null;
+}) {
+  const { myIdentity, tutorId, local } = opts;
+
+  // 1) Source of truth from API (does NOT depend on LiveKit readiness)
+  if (myIdentity && tutorId && myIdentity === tutorId) return true;
+
+  // 2) Fallbacks (when API identity not present for any reason)
+  if (local) {
+    if (isTutorByRole(local)) return true;
+    if (tutorId && local.identity && local.identity === tutorId) return true;
+  }
+
+  return false;
+}
+
 function isTutorParticipant(p: Participant | undefined, tutorId?: string) {
   if (!p) return false;
   if (isTutorByRole(p)) return true;
@@ -79,11 +96,6 @@ function isTutorParticipant(p: Participant | undefined, tutorId?: string) {
   return false;
 }
 
-/**
- * LiveKit remoteParticipants is a Map that may mutate in-place.
- * useMemo deps won't update => empty slots bug.
- * So we subscribe to participant events to force rerender.
- */
 function useAllParticipants(room: Room | undefined) {
   const [, force] = useState(0);
 
@@ -102,7 +114,6 @@ function useAllParticipants(room: Room | undefined) {
     room.on(RoomEvent.ParticipantMetadataChanged, bump);
     room.on(RoomEvent.ParticipantNameChanged, bump);
 
-    // local track changes
     room.on(RoomEvent.LocalTrackPublished, bump);
     room.on(RoomEvent.LocalTrackUnpublished, bump);
     room.on(RoomEvent.TrackMuted, bump);
@@ -135,8 +146,6 @@ function useAllParticipants(room: Room | undefined) {
 function getEnabledState(p: LocalParticipant, source: Track.Source) {
   const pub = p.getTrackPublication(source);
   if (!pub) return false;
-
-  // Publication exists but could be muted
   const muted = (pub as any).isMuted === true;
   return !muted;
 }
@@ -171,10 +180,6 @@ function useLocalMediaState(room: Room | undefined) {
   return { camOn, micOn };
 }
 
-/**
- * Camera tile using LiveKit track publication object.
- * This is more stable for LocalParticipant (student seeing own camera).
- */
 function CameraTileByPub({
   participant,
   publication,
@@ -256,7 +261,6 @@ function CameraTileByPub({
   );
 }
 
-/** Overlay (name + role) reused */
 function TileFooter({ participant, tutorId }: { participant: Participant; tutorId?: string }) {
   const name = labelOf(participant);
   const role = isTutorParticipant(participant, tutorId) ? "Tutor" : "Student";
@@ -299,7 +303,6 @@ function TileFooter({ participant, tutorId }: { participant: Participant; tutorI
   );
 }
 
-/** Button to leave class: disconnect room then go back */
 function LeaveButton({ to = "/app" }: { to?: string }) {
   const router = useRouter();
   const room = useRoomContext();
@@ -330,7 +333,6 @@ function LeaveButton({ to = "/app" }: { to?: string }) {
   );
 }
 
-/** Best-effort disconnect on refresh/close */
 function AutoDisconnectOnUnload() {
   const room = useRoomContext();
 
@@ -348,11 +350,6 @@ function AutoDisconnectOnUnload() {
   return null;
 }
 
-/**
- * Local controls:
- * - ALL users: Mic + Cam toggle
- * (NO screenshare anymore)
- */
 function LocalControls() {
   const room = useRoomContext();
   const local = room?.localParticipant;
@@ -437,13 +434,20 @@ type SlideStateMsg = {
   ts: number;
 };
 
-/** Center board: Slide presenter (Tutor controls, students follow) */
-function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
+function Board({
+  classId,
+  tutorId,
+  myIdentity,
+}: {
+  classId: string;
+  tutorId?: string;
+  myIdentity?: string;
+}) {
   const room = useRoomContext();
   const local = room?.localParticipant;
 
-  // ✅ robust tutor detection
-  const meIsTutor = isTutorParticipant(local ?? undefined, tutorId);
+  // ✅ key fix
+  const meIsTutor = computeMeIsTutor({ myIdentity, tutorId, local });
 
   const btnBase: React.CSSProperties = {
     fontFamily: UI_FONT,
@@ -461,7 +465,6 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
     userSelect: "none",
   };
 
-  // Lessons list (so tutor can pick correct lesson / slide)
   const [lessons, setLessons] = useState<LessonRow[]>([]);
   const [lessonLoading, setLessonLoading] = useState(false);
 
@@ -470,7 +473,6 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
   const [page, setPage] = useState<number>(1);
   const [presenting, setPresenting] = useState(false);
 
-  // Keep last received state for students (or even tutor who joins later)
   const [followLessonId, setFollowLessonId] = useState<string>("");
   const [followPage, setFollowPage] = useState<number>(1);
 
@@ -479,7 +481,6 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
 
   const effectiveSlideSrc = useMemo(() => {
     if (!slideUrl) return "";
-    // PDF page hint: many built-in PDF viewers respect #page
     const hash = `#page=${Math.max(1, effectivePage)}`;
     return slideUrl.includes("#") ? slideUrl : `${slideUrl}${hash}`;
   }, [slideUrl, effectivePage]);
@@ -500,7 +501,6 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
         return;
       }
       setLessons((data as LessonRow[]) || []);
-      // auto pick first lesson if empty
       if (!selectedLessonId && data && data.length > 0) {
         setSelectedLessonId((data[0] as any).id);
       }
@@ -514,48 +514,30 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
 
     const { data: sess } = await supabase.auth.getSession();
     const accessToken = sess.session?.access_token;
-
-    if (!accessToken) {
-      console.error("[Board] Missing access_token. User not logged in?");
-      return "";
-    }
+    if (!accessToken) return "";
 
     try {
       const res = await fetch(
         `/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
+        { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } }
       );
-
       const json = await res.json().catch(() => ({} as any));
       if (!res.ok) {
-        console.error(
-          "[Board] lesson-slide-signed-url failed:",
-          res.status,
-          json?.error || json
-        );
+        console.error("[lesson-slide-signed-url]", res.status, json?.error || json);
         return "";
       }
-
-      const url = String(json?.signedUrl || "");
-      return url;
+      return String(json?.signedUrl || "");
     } catch (e) {
       console.error(e);
       return "";
     }
   }
 
-  // Load lessons list
   useEffect(() => {
     fetchLessonsOnce();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
 
-  // LiveKit data channel: receive slide_state
   useEffect(() => {
     if (!room) return;
 
@@ -569,14 +551,11 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
         const msg = obj as SlideStateMsg;
         if (!msg.lessonId || typeof msg.page !== "number") return;
 
-        // Students follow; tutor can ignore incoming
         if (meIsTutor) return;
 
         setFollowLessonId(msg.lessonId);
         setFollowPage(Math.max(1, msg.page));
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
 
     room.on(RoomEvent.DataReceived, onData);
@@ -585,13 +564,11 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
     };
   }, [room, meIsTutor]);
 
-  // When effective lesson changes (tutor selected OR student follows), fetch signed URL on this client
   useEffect(() => {
     if (!effectiveLessonId) {
       setSlideUrl("");
       return;
     }
-
     (async () => {
       const url = await fetchSignedUrl(effectiveLessonId);
       setSlideUrl(url);
@@ -599,7 +576,6 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveLessonId]);
 
-  // Tutor: broadcast current state (lessonId + page) so all students sync
   const broadcastState = async (nextLessonId: string, nextPage: number) => {
     if (!room) return;
     const payload: SlideStateMsg = {
@@ -616,7 +592,6 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
     }
   };
 
-  // Tutor: start presenting -> push state so students instantly sync
   const startPresenting = async () => {
     if (!meIsTutor) return;
     const lessonId = selectedLessonId;
@@ -632,7 +607,6 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
     setPresenting(false);
   };
 
-  // Tutor: when changing lesson/page while presenting, broadcast
   useEffect(() => {
     if (!meIsTutor) return;
     if (!presenting) return;
@@ -660,7 +634,6 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
           <LeaveButton to="/app" />
           <LocalControls />
 
-          {/* Slide controls */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>Slide</div>
 
@@ -686,9 +659,7 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
               title={canControl ? "Chọn lesson để trình chiếu" : "Chỉ tutor mới được chọn lesson"}
             >
               {lessons.length === 0 ? (
-                <option value="">
-                  {lessonLoading ? "Loading lessons..." : "No lessons"}
-                </option>
+                <option value="">{lessonLoading ? "Loading lessons..." : "No lessons"}</option>
               ) : (
                 lessons.map((l) => (
                   <option key={l.id} value={l.id}>
@@ -795,7 +766,15 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
                 }}
               />
               {lessonTitle ? (
-                <span style={{ opacity: 0.7, whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
+                <span
+                  style={{
+                    opacity: 0.7,
+                    whiteSpace: "nowrap",
+                    maxWidth: 260,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
                   • {lessonTitle}
                 </span>
               ) : null}
@@ -830,15 +809,10 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
       >
         {hasSlide ? (
           <iframe
-            key={`${effectiveLessonId}-${slideUrl}`} // reload when lesson changes
+            key={`${effectiveLessonId}-${slideUrl}`}
             src={effectiveSlideSrc}
             title="Slide"
-            style={{
-              width: "100%",
-              height: "100%",
-              border: "none",
-              background: "black",
-            }}
+            style={{ width: "100%", height: "100%", border: "none", background: "black" }}
           />
         ) : (
           <div
@@ -889,7 +863,6 @@ function useSimpleChat(room: Room | undefined) {
         const decoded = new TextDecoder().decode(payload);
         const obj = JSON.parse(decoded) as any;
 
-        // Ignore slide state messages here (they are handled in Board)
         if (obj?.type === "slide_state") return;
 
         const msg = obj as { t: string; ts: number };
@@ -904,9 +877,7 @@ function useSimpleChat(room: Room | undefined) {
             text: msg.t,
           },
         ]);
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
 
     room.on(RoomEvent.DataReceived, onData);
@@ -934,7 +905,6 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
   const room = useRoomContext();
   const { messages, text, setText, send } = useSimpleChat(room);
 
-  // Stable camera publications (includes local + remote)
   const camTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: false }], {
     onlySubscribed: false,
   });
@@ -1077,7 +1047,15 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
   );
 }
 
-function MinimalClassroomUI({ classId, tutorId }: { classId: string; tutorId?: string }) {
+function MinimalClassroomUI({
+  classId,
+  tutorId,
+  myIdentity,
+}: {
+  classId: string;
+  tutorId?: string;
+  myIdentity?: string;
+}) {
   return (
     <div
       style={{
@@ -1093,7 +1071,7 @@ function MinimalClassroomUI({ classId, tutorId }: { classId: string; tutorId?: s
       }}
     >
       <div style={{ padding: 12, minWidth: 0, minHeight: 0 }}>
-        <Board classId={classId} tutorId={tutorId} />
+        <Board classId={classId} tutorId={tutorId} myIdentity={myIdentity} />
       </div>
 
       <div
@@ -1117,7 +1095,6 @@ export default function ClassroomClient({ classId }: Props) {
   const [err, setErr] = useState<string>("");
   const [info, setInfo] = useState<TokenInfo | null>(null);
 
-  // IMPORTANT: all hooks must be BEFORE any return (avoid hook-order bug)
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -1180,7 +1157,11 @@ export default function ClassroomClient({ classId }: Props) {
     >
       <RoomAudioRenderer />
       <AutoDisconnectOnUnload />
-      <MinimalClassroomUI classId={classId} tutorId={info?.tutorId} />
+      <MinimalClassroomUI
+        classId={classId}
+        tutorId={info?.tutorId}
+        myIdentity={info?.identity}
+      />
     </LiveKitRoom>
   );
 }
