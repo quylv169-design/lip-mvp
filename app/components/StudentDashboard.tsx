@@ -233,6 +233,11 @@ export default function StudentDashboard() {
   const [vocabTotal] = useState(0);
   const [vocabMasteredPct] = useState(0);
 
+  // Join class by code (MVP)
+  const [joinCodeInput, setJoinCodeInput] = useState("");
+  const [joinLoading, setJoinLoading] = useState(false);
+  const [joinMsg, setJoinMsg] = useState<string | null>(null);
+
   // Countdown ticker
   const [nowTick, setNowTick] = useState<Date>(() => new Date());
   useEffect(() => {
@@ -370,135 +375,155 @@ export default function StudentDashboard() {
     }
   }
 
-  // ----- AUTH + LOAD CLASSES -----
-  useEffect(() => {
-    (async () => {
-      setBooting(true);
-      setErr("");
+  async function loadStudentDashboardState(opts?: { preferActiveClassId?: string }) {
+    setBooting(true);
+    setErr("");
 
-      const { data: sessionRes } = await supabase.auth.getSession();
-      const session = sessionRes.session;
+    const { data: sessionRes } = await supabase.auth.getSession();
+    const session = sessionRes.session;
 
-      if (!session) {
-        router.push("/login");
-        return;
+    if (!session) {
+      router.push("/login");
+      return;
+    }
+
+    const uid = session.user.id;
+    setUserId(uid);
+
+    const meta: any = session.user.user_metadata ?? {};
+    const metaName = String(meta.full_name || meta.name || meta.display_name || "").trim();
+    setUserMetaName(metaName);
+
+    const emailName = guessNameFromEmail(session.user.email ?? null);
+    setUserEmailName(emailName);
+
+    // ✅ HARD FIX: luôn cố lấy full_name từ profiles (không để fail làm UI fallback)
+    try {
+      const { data: meRow1, error: meErr1 } = await supabase
+        .from("profiles")
+        .select("id,full_name,avatar_url")
+        .eq("id", uid)
+        .maybeSingle();
+
+      if (meErr1) {
+        console.warn("[StudentDashboard] profiles select error (1):", meErr1);
       }
 
-      const uid = session.user.id;
-      setUserId(uid);
+      const nameCandidate = String(meRow1?.full_name ?? "").trim();
+      if (meRow1 && nameCandidate) {
+        setMe((meRow1 as any) ?? null);
+      } else {
+        // thử tạo/đồng bộ profile (nếu policy cho phép)
+        const fallbackName = (metaName || "").trim() || emailName || "Student";
+        const { error: upsertErr } = await supabase.from("profiles").upsert(
+          {
+            id: uid,
+            full_name: fallbackName,
+            avatar_url: meRow1?.avatar_url ?? null,
+          },
+          { onConflict: "id" }
+        );
 
-      const meta: any = session.user.user_metadata ?? {};
-      const metaName = String(meta.full_name || meta.name || meta.display_name || "").trim();
-      setUserMetaName(metaName);
+        if (upsertErr) {
+          console.warn("[StudentDashboard] profiles upsert error:", upsertErr);
+        }
 
-      const emailName = guessNameFromEmail(session.user.email ?? null);
-      setUserEmailName(emailName);
-
-      // ✅ HARD FIX: luôn cố lấy full_name từ profiles (không để fail làm UI fallback)
-      try {
-        const { data: meRow1, error: meErr1 } = await supabase
+        const { data: meRow2, error: meErr2 } = await supabase
           .from("profiles")
           .select("id,full_name,avatar_url")
           .eq("id", uid)
           .maybeSingle();
 
-        if (meErr1) {
-          console.warn("[StudentDashboard] profiles select error (1):", meErr1);
+        if (meErr2) {
+          console.warn("[StudentDashboard] profiles select error (2):", meErr2);
         }
 
-        const nameCandidate = String(meRow1?.full_name ?? "").trim();
-        if (meRow1 && nameCandidate) {
-          setMe((meRow1 as any) ?? null);
-        } else {
-          // thử tạo/đồng bộ profile (nếu policy cho phép)
-          const fallbackName = (metaName || "").trim() || emailName || "Student";
-          const { error: upsertErr } = await supabase.from("profiles").upsert(
-            {
-              id: uid,
-              full_name: fallbackName,
-              avatar_url: meRow1?.avatar_url ?? null,
-            },
-            { onConflict: "id" }
-          );
-
-          if (upsertErr) {
-            console.warn("[StudentDashboard] profiles upsert error:", upsertErr);
-          }
-
-          const { data: meRow2, error: meErr2 } = await supabase
-            .from("profiles")
-            .select("id,full_name,avatar_url")
-            .eq("id", uid)
-            .maybeSingle();
-
-          if (meErr2) {
-            console.warn("[StudentDashboard] profiles select error (2):", meErr2);
-          }
-
-          setMe((meRow2 as any) ?? null);
-        }
-      } catch (e: any) {
-        console.warn("[StudentDashboard] profiles fetch crash:", e);
-        setMe(null);
+        setMe((meRow2 as any) ?? null);
       }
+    } catch (e: any) {
+      console.warn("[StudentDashboard] profiles fetch crash:", e);
+      setMe(null);
+    }
 
-      const { data: memberships, error: memErr } = await supabase.from("class_members").select("class_id").eq("student_id", uid);
+    const { data: memberships, error: memErr } = await supabase.from("class_members").select("class_id").eq("student_id", uid);
 
-      if (memErr) {
-        setErr(memErr.message);
-        setBooting(false);
-        return;
-      }
-
-      const classIds = (memberships ?? []).map((m: any) => m.class_id);
-      if (classIds.length === 0) {
-        setClasses([]);
-        setActiveClassId("");
-        setLessons([]);
-        setExpandedLessonId(null);
-        setLessonTab("prelearning");
-        setBooting(false);
-        return;
-      }
-
-      const { data: classRows, error: classErr } = await supabase
-        .from("classes")
-        .select("id,name,tutor_id,join_code,created_at")
-        .in("id", classIds);
-
-      if (classErr) {
-        setErr(classErr.message);
-        setBooting(false);
-        return;
-      }
-
-      const tutorIds = Array.from(new Set((classRows ?? []).map((c: any) => c.tutor_id)));
-      const { data: tutorRows, error: tutorErr } = await supabase.from("profiles").select("id,full_name").in("id", tutorIds);
-
-      if (tutorErr) {
-        setErr(tutorErr.message);
-        setBooting(false);
-        return;
-      }
-
-      const tutorMap = new Map<string, string>();
-      (tutorRows ?? []).forEach((t: TutorRow) => tutorMap.set(t.id, t.full_name ?? "Tutor"));
-
-      const vms: ClassVM[] = (classRows ?? [])
-        .sort((a: any, b: any) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
-        .map((c: ClassRow) => ({
-          id: c.id,
-          name: c.name,
-          tutorName: tutorMap.get(c.tutor_id) ?? "Tutor",
-          joinCode: c.join_code,
-          scheduleText: "20:00 • T3, T5, T7", // MVP placeholder
-        }));
-
-      setClasses(vms);
-      setActiveClassId((prev) => prev || vms[0]?.id || "");
-
+    if (memErr) {
+      setErr(memErr.message);
+      setClasses([]);
+      setActiveClassId("");
+      setLessons([]);
+      setExpandedLessonId(null);
+      setLessonTab("prelearning");
       setBooting(false);
+      return;
+    }
+
+    const classIds = (memberships ?? []).map((m: any) => m.class_id);
+    if (classIds.length === 0) {
+      setClasses([]);
+      setActiveClassId("");
+      setLessons([]);
+      setExpandedLessonId(null);
+      setLessonTab("prelearning");
+      setBooting(false);
+      return;
+    }
+
+    const { data: classRows, error: classErr } = await supabase.from("classes").select("id,name,tutor_id,join_code,created_at").in("id", classIds);
+
+    if (classErr) {
+      setErr(classErr.message);
+      setClasses([]);
+      setActiveClassId("");
+      setLessons([]);
+      setExpandedLessonId(null);
+      setLessonTab("prelearning");
+      setBooting(false);
+      return;
+    }
+
+    const tutorIds = Array.from(new Set((classRows ?? []).map((c: any) => c.tutor_id)));
+    const { data: tutorRows, error: tutorErr } = await supabase.from("profiles").select("id,full_name").in("id", tutorIds);
+
+    if (tutorErr) {
+      setErr(tutorErr.message);
+      setClasses([]);
+      setActiveClassId("");
+      setLessons([]);
+      setExpandedLessonId(null);
+      setLessonTab("prelearning");
+      setBooting(false);
+      return;
+    }
+
+    const tutorMap = new Map<string, string>();
+    (tutorRows ?? []).forEach((t: TutorRow) => tutorMap.set(t.id, t.full_name ?? "Tutor"));
+
+    const vms: ClassVM[] = (classRows ?? [])
+      .sort((a: any, b: any) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
+      .map((c: ClassRow) => ({
+        id: c.id,
+        name: c.name,
+        tutorName: tutorMap.get(c.tutor_id) ?? "Tutor",
+        joinCode: c.join_code,
+        scheduleText: "20:00 • T3, T5, T7", // MVP placeholder
+      }));
+
+    setClasses(vms);
+
+    const prefer = String(opts?.preferActiveClassId ?? "").trim();
+    const nextActive = prefer && vms.some((x) => x.id === prefer) ? prefer : vms[0]?.id || "";
+    setActiveClassId(nextActive);
+
+    setBooting(false);
+  }
+
+  // ----- AUTH + LOAD CLASSES -----
+  useEffect(() => {
+    (async () => {
+      await loadStudentDashboardState();
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   // ----- LOAD LESSONS + LATEST PRELEARNING + LATEST PRACTICE -----
@@ -673,6 +698,89 @@ export default function StudentDashboard() {
     router.push("/login");
   }
 
+  async function joinClassByCode() {
+    const code = String(joinCodeInput || "").trim();
+    setJoinMsg(null);
+
+    if (!code) {
+      setJoinMsg("Vui lòng nhập join code.");
+      return;
+    }
+    if (!userId) {
+      setJoinMsg("Chưa xác định được user. Vui lòng reload trang.");
+      return;
+    }
+
+    setJoinLoading(true);
+
+    try {
+      // 1) Find class by join_code
+      const { data: classRow, error: classErr } = await supabase
+        .from("classes")
+        .select("id,name,tutor_id,join_code,created_at")
+        .eq("join_code", code)
+        .maybeSingle();
+
+      if (classErr) {
+        setJoinMsg(classErr.message || "Không tìm được lớp (có thể bị RLS chặn).");
+        return;
+      }
+
+      if (!classRow?.id) {
+        setJoinMsg("Join code không đúng hoặc lớp không tồn tại.");
+        return;
+      }
+
+      const classId = String(classRow.id);
+
+      // 2) Already joined?
+      const { data: existed, error: existedErr } = await supabase
+        .from("class_members")
+        .select("class_id")
+        .eq("class_id", classId)
+        .eq("student_id", userId)
+        .maybeSingle();
+
+      if (existedErr) {
+        setJoinMsg(existedErr.message || "Không kiểm tra được membership (có thể bị RLS chặn).");
+        return;
+      }
+
+      if (existed?.class_id) {
+        setJoinMsg("Bạn đã ở trong lớp này rồi.");
+        // jump to that class anyway
+        await loadStudentDashboardState({ preferActiveClassId: classId });
+        setActiveClassId(classId);
+        return;
+      }
+
+      // 3) Insert membership
+      const { error: insErr } = await supabase.from("class_members").insert({
+        class_id: classId,
+        student_id: userId,
+      });
+
+      if (insErr) {
+        // e.g. class full (max 2 students) / unique constraint / RLS
+        setJoinMsg(insErr.message || "Không join được lớp.");
+        return;
+      }
+
+      setJoinMsg("✅ Join lớp thành công!");
+      setJoinCodeInput("");
+
+      // 4) Reload + focus new class
+      await loadStudentDashboardState({ preferActiveClassId: classId });
+      setActiveClassId(classId);
+      setExpandedLessonId(null);
+      setLessonTab("prelearning");
+    } catch (e: any) {
+      setJoinMsg(e?.message || "Lỗi không xác định khi join lớp.");
+    } finally {
+      setJoinLoading(false);
+    }
+  }
+
   // ---------- STYLES ----------
   const styles: Record<string, React.CSSProperties> = {
     page: {
@@ -699,6 +807,18 @@ export default function StudentDashboard() {
       fontSize: 12,
       cursor: "pointer",
       outline: "none",
+    },
+    input: {
+      height: 40,
+      borderRadius: 12,
+      border: "1px solid var(--lip-border-strong, rgba(255,255,255,0.18))",
+      background: "var(--lip-surface-1, rgba(255,255,255,0.06))",
+      color: "inherit",
+      padding: "0 12px",
+      fontWeight: 900,
+      fontSize: 12,
+      outline: "none",
+      width: "100%",
     },
     grid: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 },
     col: {
@@ -1162,6 +1282,39 @@ export default function StudentDashboard() {
             <div style={styles.pill}>{classes.length} classes</div>
           </div>
 
+          {/* ✅ Join class by code */}
+          <div style={styles.cardMini}>
+            <div style={{ fontWeight: 950, fontSize: 13 }}>Join class bằng code</div>
+            <div style={styles.tiny}>Nhập code tutor cung cấp để vào lớp (ví dụ: ABC123).</div>
+
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <input
+                value={joinCodeInput}
+                onChange={(e) => setJoinCodeInput(e.target.value)}
+                placeholder="Join code…"
+                style={styles.input}
+                disabled={joinLoading}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") joinClassByCode();
+                }}
+                aria-label="Join code input"
+              />
+              <button style={styles.btnPrimary} onClick={joinClassByCode} disabled={joinLoading}>
+                {joinLoading ? "Joining…" : "Join →"}
+              </button>
+            </div>
+
+            {joinMsg ? (
+              <div style={{ ...styles.tiny, color: joinMsg.startsWith("✅") ? "rgba(170,255,210,0.95)" : "var(--lip-error, #ffb4b4)" }}>
+                {joinMsg}
+              </div>
+            ) : null}
+
+            <div style={styles.tiny}>
+              Nếu join bị lỗi “RLS”/“permission denied”: cần policy cho <b>select classes theo join_code</b> + <b>insert class_members</b>.
+            </div>
+          </div>
+
           {/* Countdown T-2h */}
           <div style={styles.countdownCard}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
@@ -1200,7 +1353,7 @@ export default function StudentDashboard() {
             <div style={styles.muted}>
               Bạn chưa tham gia lớp nào.
               <br />
-              MVP: sẽ có flow nhập <b>join code</b>.
+              Hãy dùng ô <b>Join class bằng code</b> ở trên.
             </div>
           ) : (
             <div style={styles.list}>
