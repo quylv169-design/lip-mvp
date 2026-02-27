@@ -1109,6 +1109,28 @@ export default function VocabularyPage() {
     return { done, total };
   }, [quizStarted, quizByWord]);
 
+  // ✅ POS chip style helper: active MUST keep border visible on light theme too
+  function getPosChipStyle(isOpen: boolean): React.CSSProperties {
+    if (!isOpen) {
+      return {
+        ...styles.chip,
+        border: "1px solid var(--border)",
+        background: "rgba(255,255,255,0.04)",
+        boxShadow: "none",
+        fontWeight: 900,
+      };
+    }
+
+    // Active: use a darker border + clear ring so it never “disappears” on white cards
+    return {
+      ...styles.chip,
+      border: "2px solid rgba(0,0,0,0.35)",
+      background: "rgba(0,0,0,0.04)",
+      boxShadow: "0 0 0 3px rgba(0,0,0,0.10)",
+      fontWeight: 950,
+    };
+  }
+
   // ---------- UI ----------
   return (
     <div style={styles.page}>
@@ -1476,28 +1498,20 @@ export default function VocabularyPage() {
                         // keep suffix only after submit (so it won't be confused with active state)
                         const chipSuffix = quizSubmitted && q.isCorrect != null ? (q.isCorrect ? "✅" : "❌") : "";
 
-                        // ✅ UX fix: active chip keeps clear border + ring highlight (no ✅, no ❌)
-                        const chipStyle: React.CSSProperties = isOpen
-                          ? {
-                              ...styles.chip,
-                              border: "2px solid rgba(255,255,255,0.55)",
-                              background: "rgba(255,255,255,0.10)",
-                              boxShadow: "0 0 0 3px rgba(255,255,255,0.06)",
-                              fontWeight: 950,
-                            }
-                          : {
-                              ...styles.chip,
-                              border: "1px solid var(--border)",
-                              background: "rgba(255,255,255,0.04)",
-                              boxShadow: "none",
-                            };
-
                         return (
                           <div
                             key={q.senseId}
-                            style={chipStyle}
+                            style={getPosChipStyle(isOpen)}
                             onClick={() => setOpenQKey((prev) => (prev === key ? null : key))}
                             title="Open quiz for this POS"
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setOpenQKey((prev) => (prev === key ? null : key));
+                              }
+                            }}
                           >
                             {posLabel(q.pos)}
                             {chipSuffix ? <span style={{ marginLeft: 6 }}>{chipSuffix}</span> : null}
