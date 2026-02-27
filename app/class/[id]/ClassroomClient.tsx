@@ -1,3 +1,4 @@
+// app/class/[id]/ClassroomClient.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -34,6 +35,14 @@ type ChatMsg = {
   ts: number;
   from: string;
   text: string;
+};
+
+type LessonRow = {
+  id: string;
+  class_id: string;
+  title: string;
+  order_index: number;
+  slide_path: string | null;
 };
 
 const RIGHT_COL_W = 360;
@@ -150,9 +159,8 @@ function useLocalMediaState(room: Room | undefined) {
   const lp = room?.localParticipant;
   const camOn = lp ? getEnabledState(lp, Track.Source.Camera) : false;
   const micOn = lp ? getEnabledState(lp, Track.Source.Microphone) : false;
-  const shareOn = lp ? getEnabledState(lp, Track.Source.ScreenShare) : false;
 
-  return { camOn, micOn, shareOn };
+  return { camOn, micOn };
 }
 
 /**
@@ -335,16 +343,14 @@ function AutoDisconnectOnUnload() {
 /**
  * Local controls:
  * - ALL users: Mic + Cam toggle
- * - Tutor only: Share toggle
+ * (NO screenshare anymore)
  */
 function LocalControls() {
   const room = useRoomContext();
   const local = room?.localParticipant;
 
-  const meIsTutor = !!local && isTutorByRole(local);
-
-  const { camOn, micOn, shareOn } = useLocalMediaState(room);
-  const [busy, setBusy] = useState<null | "cam" | "mic" | "share">(null);
+  const { camOn, micOn } = useLocalMediaState(room);
+  const [busy, setBusy] = useState<null | "cam" | "mic">(null);
 
   const btnBase: React.CSSProperties = {
     fontFamily: UI_FONT,
@@ -412,63 +418,369 @@ function LocalControls() {
       >
         🎙️ <span>Mic</span> <span style={pill(micOn)}>{micOn ? "On" : "Off"}</span>
       </button>
-
-      {meIsTutor && (
-        <button
-          disabled={!local || busy !== null}
-          onClick={async () => {
-            if (!local) return;
-            setBusy("share");
-            try {
-              await local.setScreenShareEnabled(!shareOn);
-            } finally {
-              setBusy(null);
-            }
-          }}
-          style={{
-            ...btnBase,
-            opacity: !local || busy !== null ? 0.55 : 1,
-          }}
-          title="Share/Stop màn hình (Tutor)"
-        >
-          🖥️ <span>Share</span> <span style={pill(shareOn)}>{shareOn ? "On" : "Off"}</span>
-        </button>
-      )}
     </div>
   );
 }
 
-/** Center board: ONLY screenshare */
-function Board() {
+type SlideStateMsg = {
+  type: "slide_state";
+  lessonId: string;
+  page: number;
+  ts: number;
+};
+
+/** Center board: Slide presenter (Tutor controls, students follow) */
+function Board({ classId }: { classId: string }) {
   const room = useRoomContext();
+  const local = room?.localParticipant;
+  const meIsTutor = !!local && isTutorByRole(local);
 
-  const shareTracks = useTracks([{ source: Track.Source.ScreenShare, withPlaceholder: false }], {
-    onlySubscribed: false,
-  });
+  const btnBase: React.CSSProperties = {
+    fontFamily: UI_FONT,
+    height: 34,
+    padding: "0 10px",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    color: "white",
+    fontWeight: 800,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    userSelect: "none",
+  };
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const shareTrack = shareTracks[0]?.publication?.videoTrack;
+  // Lessons list (so tutor can pick correct lesson / slide)
+  const [lessons, setLessons] = useState<LessonRow[]>([]);
+  const [lessonLoading, setLessonLoading] = useState(false);
 
+  const [selectedLessonId, setSelectedLessonId] = useState<string>("");
+  const [slideUrl, setSlideUrl] = useState<string>("");
+  const [page, setPage] = useState<number>(1);
+  const [presenting, setPresenting] = useState(false);
+
+  // Keep last received state for students (or even tutor who joins later)
+  const [followLessonId, setFollowLessonId] = useState<string>("");
+  const [followPage, setFollowPage] = useState<number>(1);
+
+  const effectiveLessonId = meIsTutor ? selectedLessonId : followLessonId;
+  const effectivePage = meIsTutor ? page : followPage;
+
+  const effectiveSlideSrc = useMemo(() => {
+    if (!slideUrl) return "";
+    // PDF page hint: many built-in PDF viewers respect #page
+    const hash = `#page=${Math.max(1, effectivePage)}`;
+    return slideUrl.includes("#") ? slideUrl : `${slideUrl}${hash}`;
+  }, [slideUrl, effectivePage]);
+
+  async function fetchLessonsOnce() {
+    if (!classId) return;
+    setLessonLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("lessons")
+        .select("id,class_id,title,order_index,slide_path")
+        .eq("class_id", classId)
+        .order("order_index", { ascending: true });
+
+      if (error) {
+        console.error(error);
+        setLessons([]);
+        return;
+      }
+      setLessons((data as LessonRow[]) || []);
+      // auto pick first lesson if empty
+      if (!selectedLessonId && data && data.length > 0) {
+        setSelectedLessonId((data[0] as any).id);
+      }
+    } finally {
+      setLessonLoading(false);
+    }
+  }
+
+  async function fetchSignedUrl(lessonId: string) {
+    if (!lessonId) return "";
+    try {
+      const res = await fetch(`/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`, {
+        method: "GET",
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        console.error(json?.error || "Failed to get signed url");
+        return "";
+      }
+      const url = String(json?.signedUrl || "");
+      return url;
+    } catch (e) {
+      console.error(e);
+      return "";
+    }
+  }
+
+  // Load lessons list
   useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-    if (!shareTrack) return;
+    fetchLessonsOnce();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classId]);
 
-    shareTrack.attach(el);
-    return () => {
-      shareTrack.detach(el);
+  // LiveKit data channel: receive slide_state
+  useEffect(() => {
+    if (!room) return;
+
+    const onData = (payload: Uint8Array) => {
+      try {
+        const decoded = new TextDecoder().decode(payload);
+        const obj = JSON.parse(decoded) as any;
+
+        if (obj?.type !== "slide_state") return;
+
+        const msg = obj as SlideStateMsg;
+        if (!msg.lessonId || typeof msg.page !== "number") return;
+
+        // Students follow; tutor can ignore incoming
+        if (meIsTutor) return;
+
+        setFollowLessonId(msg.lessonId);
+        setFollowPage(Math.max(1, msg.page));
+      } catch {
+        // ignore
+      }
     };
-  }, [shareTrack]);
 
-  const hasShare = !!shareTrack;
+    room.on(RoomEvent.DataReceived, onData);
+    return () => {
+      room.off(RoomEvent.DataReceived, onData);
+    };
+  }, [room, meIsTutor]);
+
+  // When effective lesson changes (tutor selected OR student follows), fetch signed URL on this client
+  useEffect(() => {
+    if (!effectiveLessonId) {
+      setSlideUrl("");
+      return;
+    }
+
+    (async () => {
+      const url = await fetchSignedUrl(effectiveLessonId);
+      setSlideUrl(url);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveLessonId]);
+
+  // Tutor: broadcast current state (lessonId + page) so all students sync
+  const broadcastState = async (nextLessonId: string, nextPage: number) => {
+    if (!room) return;
+    const payload: SlideStateMsg = {
+      type: "slide_state",
+      lessonId: nextLessonId,
+      page: Math.max(1, nextPage),
+      ts: Date.now(),
+    };
+    try {
+      const bytes = new TextEncoder().encode(JSON.stringify(payload));
+      room.localParticipant.publishData(bytes, { reliable: true });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Tutor: start presenting -> push state so students instantly sync (they will fetch signedUrl themselves)
+  const startPresenting = async () => {
+    if (!meIsTutor) return;
+    const lessonId = selectedLessonId;
+    if (!lessonId) return;
+
+    setPresenting(true);
+    const safePage = Math.max(1, page);
+    setPage(safePage);
+    await broadcastState(lessonId, safePage);
+  };
+
+  const stopPresenting = async () => {
+    // MVP: keep last state; stopping just disables tutor controls
+    setPresenting(false);
+  };
+
+  // Tutor: when changing lesson/page while presenting, broadcast
+  useEffect(() => {
+    if (!meIsTutor) return;
+    if (!presenting) return;
+    if (!selectedLessonId) return;
+    broadcastState(selectedLessonId, page);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meIsTutor, presenting, selectedLessonId, page]);
+
+  const canControl = meIsTutor;
+
+  const lessonTitle = useMemo(() => {
+    const id = effectiveLessonId;
+    if (!id) return "";
+    const found = lessons.find((l) => l.id === id);
+    return found ? found.title : "";
+  }, [effectiveLessonId, lessons]);
+
+  const hasSlide = !!slideUrl;
 
   return (
     <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div style={{ fontWeight: 800, fontSize: 14, opacity: 0.9 }}>Board</div>
           <LeaveButton to="/app" />
           <LocalControls />
+
+          {/* Slide controls */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>Slide</div>
+
+            <select
+              disabled={!canControl || lessonLoading}
+              value={selectedLessonId}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSelectedLessonId(v);
+                setPage(1);
+                // If presenting, broadcast will happen via effect
+              }}
+              style={{
+                fontFamily: UI_FONT,
+                height: 34,
+                borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(0,0,0,0.35)",
+                color: "white",
+                padding: "0 10px",
+                outline: "none",
+                opacity: !canControl ? 0.55 : 1,
+              }}
+              title={canControl ? "Chọn lesson để trình chiếu" : "Chỉ tutor mới được chọn lesson"}
+            >
+              {lessons.length === 0 ? (
+                <option value="">
+                  {lessonLoading ? "Loading lessons..." : "No lessons"}
+                </option>
+              ) : (
+                lessons.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.order_index}. {l.title}
+                    {l.slide_path ? "" : " (no slide)"}
+                  </option>
+                ))
+              )}
+            </select>
+
+            {meIsTutor ? (
+              presenting ? (
+                <button onClick={stopPresenting} style={btnBase} title="Tắt chế độ trình chiếu (MVP)">
+                  ⏸️ Presenting
+                </button>
+              ) : (
+                <button
+                  onClick={startPresenting}
+                  disabled={!selectedLessonId}
+                  style={{ ...btnBase, opacity: !selectedLessonId ? 0.55 : 1 }}
+                  title="Bắt đầu trình chiếu slide cho cả lớp"
+                >
+                  ▶️ Present
+                </button>
+              )
+            ) : (
+              <div
+                style={{
+                  fontSize: 12,
+                  opacity: 0.7,
+                  padding: "0 8px",
+                  height: 34,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "rgba(255,255,255,0.04)",
+                }}
+                title="Bạn đang xem slide theo tutor"
+              >
+                Following tutor
+              </div>
+            )}
+
+            <button
+              disabled={!hasSlide}
+              onClick={() => {
+                if (!hasSlide) return;
+                const url = slideUrl.includes("#")
+                  ? slideUrl
+                  : `${slideUrl}#page=${Math.max(1, effectivePage)}`;
+                window.open(url, "_blank", "noopener,noreferrer");
+              }}
+              style={{ ...btnBase, opacity: !hasSlide ? 0.55 : 1 }}
+              title="Mở slide ở tab mới (fullscreen chắc ăn)"
+            >
+              ↗ Open
+            </button>
+
+            <button
+              disabled={!hasSlide || !canControl}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              style={{ ...btnBase, opacity: !hasSlide || !canControl ? 0.55 : 1 }}
+              title={canControl ? "Trang trước" : "Chỉ tutor điều khiển trang"}
+            >
+              ◀ Prev
+            </button>
+
+            <div
+              style={{
+                height: 34,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "0 10px",
+                borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(0,0,0,0.25)",
+                fontSize: 12,
+                opacity: 0.9,
+              }}
+              title="Trang đang trình chiếu"
+            >
+              Page
+              <input
+                value={String(effectivePage)}
+                disabled={!hasSlide || !canControl}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  const n = Math.max(1, parseInt(raw || "1", 10) || 1);
+                  setPage(n);
+                }}
+                style={{
+                  fontFamily: UI_FONT,
+                  width: 54,
+                  height: 26,
+                  borderRadius: 8,
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(0,0,0,0.35)",
+                  color: "white",
+                  padding: "0 8px",
+                  outline: "none",
+                  opacity: !hasSlide || !canControl ? 0.55 : 1,
+                }}
+              />
+              {lessonTitle ? (
+                <span style={{ opacity: 0.7, whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  • {lessonTitle}
+                </span>
+              ) : null}
+            </div>
+
+            <button
+              disabled={!hasSlide || !canControl}
+              onClick={() => setPage((p) => Math.max(1, p + 1))}
+              style={{ ...btnBase, opacity: !hasSlide || !canControl ? 0.55 : 1 }}
+              title={canControl ? "Trang tiếp" : "Chỉ tutor điều khiển trang"}
+            >
+              Next ▶
+            </button>
+          </div>
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.65 }}>
@@ -487,12 +799,17 @@ function Board() {
           position: "relative",
         }}
       >
-        {hasShare ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            style={{ width: "100%", height: "100%", objectFit: "contain", background: "black" }}
+        {hasSlide ? (
+          <iframe
+            key={`${effectiveLessonId}-${slideUrl}`} // reload when lesson changes
+            src={effectiveSlideSrc}
+            title="Slide"
+            style={{
+              width: "100%",
+              height: "100%",
+              border: "none",
+              background: "black",
+            }}
           />
         ) : (
           <div
@@ -506,12 +823,22 @@ function Board() {
               color: "rgba(255,255,255,0.75)",
             }}
           >
-            <div style={{ maxWidth: 520 }}>
-              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>Chưa có “bảng”</div>
+            <div style={{ maxWidth: 560 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>Chưa có slide</div>
               <div style={{ fontSize: 14, lineHeight: 1.6, opacity: 0.9 }}>
-                Tutor bấm <b>Share</b> để share slide/bảng.
-                <br />
-                Khu vực này chỉ hiển thị <b>screenshare</b>, không bao giờ hiện camera.
+                {meIsTutor ? (
+                  <>
+                    Chọn <b>Lesson</b> có slide, rồi bấm <b>Present</b> để trình chiếu.
+                    <br />
+                    (Nếu lesson chưa có slide, hãy upload trong <b>/admin</b> trước.)
+                  </>
+                ) : (
+                  <>
+                    Chờ tutor bấm <b>Present</b> để bạn xem slide.
+                    <br />
+                    Nếu vẫn không thấy, có thể lesson chưa được upload slide.
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -531,16 +858,21 @@ function useSimpleChat(room: Room | undefined) {
     const onData = (payload: Uint8Array, participant?: Participant) => {
       try {
         const decoded = new TextDecoder().decode(payload);
-        const obj = JSON.parse(decoded) as { t: string; ts: number };
+        const obj = JSON.parse(decoded) as any;
+
+        // Ignore slide state messages here (they are handled in Board)
+        if (obj?.type === "slide_state") return;
+
+        const msg = obj as { t: string; ts: number };
+        if (typeof msg?.t !== "string") return;
+
         setMessages((prev) => [
           ...prev,
           {
-            id: `${obj.ts}-${participant?.identity ?? "unknown"}-${Math.random()
-              .toString(16)
-              .slice(2)}`,
-            ts: obj.ts,
+            id: `${msg.ts}-${participant?.identity ?? "unknown"}-${Math.random().toString(16).slice(2)}`,
+            ts: msg.ts,
             from: participant ? labelOf(participant) : "system",
-            text: obj.t,
+            text: msg.t,
           },
         ]);
       } catch {
@@ -716,7 +1048,7 @@ function RightColumn() {
   );
 }
 
-function MinimalClassroomUI() {
+function MinimalClassroomUI({ classId }: { classId: string }) {
   return (
     <div
       style={{
@@ -732,7 +1064,7 @@ function MinimalClassroomUI() {
       }}
     >
       <div style={{ padding: 12, minWidth: 0, minHeight: 0 }}>
-        <Board />
+        <Board classId={classId} />
       </div>
 
       <div
@@ -819,7 +1151,7 @@ export default function ClassroomClient({ classId }: Props) {
     >
       <RoomAudioRenderer />
       <AutoDisconnectOnUnload />
-      <MinimalClassroomUI />
+      <MinimalClassroomUI classId={classId} />
     </LiveKitRoom>
   );
 }
