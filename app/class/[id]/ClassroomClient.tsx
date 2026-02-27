@@ -432,8 +432,43 @@ type SlideStateMsg = {
 /** Center board: Slide presenter (Tutor controls, students follow) */
 function Board({ classId }: { classId: string }) {
   const room = useRoomContext();
-  const local = room?.localParticipant;
-  const meIsTutor = !!local && isTutorByRole(local);
+
+  /**
+   * IMPORTANT:
+   * LiveKit may set localParticipant.metadata AFTER the component first renders.
+   * If we only compute role once, UI can get stuck in "student" mode (no Present button),
+   * even though the People list later shows correct role.
+   *
+   * => We force a rerender when metadata changes.
+   */
+  const [roleTick, setRoleTick] = useState(0);
+
+  useEffect(() => {
+    if (!room) return;
+
+    const bump = () => setRoleTick((x) => x + 1);
+
+    room.on(RoomEvent.ParticipantMetadataChanged, bump);
+    room.on(RoomEvent.ParticipantNameChanged, bump);
+    room.on(RoomEvent.ConnectionStateChanged, bump);
+    room.on(RoomEvent.ParticipantConnected, bump);
+    room.on(RoomEvent.ParticipantDisconnected, bump);
+
+    return () => {
+      room.off(RoomEvent.ParticipantMetadataChanged, bump);
+      room.off(RoomEvent.ParticipantNameChanged, bump);
+      room.off(RoomEvent.ConnectionStateChanged, bump);
+      room.off(RoomEvent.ParticipantConnected, bump);
+      room.off(RoomEvent.ParticipantDisconnected, bump);
+    };
+  }, [room]);
+
+  const meIsTutor = useMemo(() => {
+    const local = room?.localParticipant;
+    if (!local) return false;
+    return isTutorByRole(local);
+    // roleTick forces recompute after metadata sync
+  }, [room, roleTick]);
 
   const btnBase: React.CSSProperties = {
     fontFamily: UI_FONT,
@@ -502,9 +537,12 @@ function Board({ classId }: { classId: string }) {
   async function fetchSignedUrl(lessonId: string) {
     if (!lessonId) return "";
     try {
-      const res = await fetch(`/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`, {
-        method: "GET",
-      });
+      const res = await fetch(
+        `/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`,
+        {
+          method: "GET",
+        }
+      );
       const json = await res.json();
       if (!res.ok) {
         console.error(json?.error || "Failed to get signed url");
@@ -623,8 +661,23 @@ function Board({ classId }: { classId: string }) {
   const hasSlide = !!slideUrl;
 
   return (
-    <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+    <div
+      style={{
+        height: "100%",
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div style={{ fontWeight: 800, fontSize: 14, opacity: 0.9 }}>Board</div>
           <LeaveButton to="/app" />
@@ -657,9 +710,7 @@ function Board({ classId }: { classId: string }) {
               title={canControl ? "Chọn lesson để trình chiếu" : "Chỉ tutor mới được chọn lesson"}
             >
               {lessons.length === 0 ? (
-                <option value="">
-                  {lessonLoading ? "Loading lessons..." : "No lessons"}
-                </option>
+                <option value="">{lessonLoading ? "Loading lessons..." : "No lessons"}</option>
               ) : (
                 lessons.map((l) => (
                   <option key={l.id} value={l.id}>
@@ -766,7 +817,15 @@ function Board({ classId }: { classId: string }) {
                 }}
               />
               {lessonTitle ? (
-                <span style={{ opacity: 0.7, whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
+                <span
+                  style={{
+                    opacity: 0.7,
+                    whiteSpace: "nowrap",
+                    maxWidth: 260,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
                   • {lessonTitle}
                 </span>
               ) : null}
@@ -869,7 +928,9 @@ function useSimpleChat(room: Room | undefined) {
         setMessages((prev) => [
           ...prev,
           {
-            id: `${msg.ts}-${participant?.identity ?? "unknown"}-${Math.random().toString(16).slice(2)}`,
+            id: `${msg.ts}-${participant?.identity ?? "unknown"}-${Math.random()
+              .toString(16)
+              .slice(2)}`,
             ts: msg.ts,
             from: participant ? labelOf(participant) : "system",
             text: msg.t,
