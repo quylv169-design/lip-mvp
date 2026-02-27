@@ -1,7 +1,7 @@
 // app/components/StudentDashboard.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -225,6 +225,10 @@ export default function StudentDashboard() {
   const [slideErr, setSlideErr] = useState("");
   const [slideUrl, setSlideUrl] = useState<string>("");
 
+  // ✅ Fullscreen for slide modal
+  const slideFrameWrapRef = useRef<HTMLDivElement | null>(null);
+  const [slideIsFullscreen, setSlideIsFullscreen] = useState(false);
+
   // Vocabulary snapshot (MVP placeholder)
   const [vocabTotal] = useState(0);
   const [vocabMasteredPct] = useState(0);
@@ -235,6 +239,99 @@ export default function StudentDashboard() {
     const id = setInterval(() => setNowTick(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // --- Fullscreen helpers ---
+  function getFullscreenElement(): Element | null {
+    const d: any = document as any;
+    return (document.fullscreenElement ||
+      d.webkitFullscreenElement ||
+      d.mozFullScreenElement ||
+      d.msFullscreenElement ||
+      null) as Element | null;
+  }
+
+  async function requestFullscreenForSlide() {
+    const el = slideFrameWrapRef.current as any;
+    if (!el) return;
+
+    try {
+      if (el.requestFullscreen) {
+        await el.requestFullscreen();
+        return;
+      }
+      if (el.webkitRequestFullscreen) {
+        // Safari
+        el.webkitRequestFullscreen();
+        return;
+      }
+      if (el.mozRequestFullScreen) {
+        el.mozRequestFullScreen();
+        return;
+      }
+      if (el.msRequestFullscreen) {
+        el.msRequestFullscreen();
+        return;
+      }
+
+      // fallback
+      if (slideUrl) window.open(slideUrl, "_blank", "noopener,noreferrer");
+    } catch {
+      // fallback (some browsers block programmatic fullscreen)
+      if (slideUrl) window.open(slideUrl, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  async function exitFullscreen() {
+    try {
+      const d: any = document as any;
+      if (document.exitFullscreen) {
+        await document.exitFullscreen();
+        return;
+      }
+      if (d.webkitExitFullscreen) {
+        d.webkitExitFullscreen();
+        return;
+      }
+      if (d.mozCancelFullScreen) {
+        d.mozCancelFullScreen();
+        return;
+      }
+      if (d.msExitFullscreen) {
+        d.msExitFullscreen();
+        return;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    const onFsChange = () => {
+      const fsEl = getFullscreenElement();
+      const wrap = slideFrameWrapRef.current;
+      setSlideIsFullscreen(!!fsEl && !!wrap && fsEl === wrap);
+    };
+
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange" as any, onFsChange);
+    document.addEventListener("mozfullscreenchange" as any, onFsChange);
+    document.addEventListener("MSFullscreenChange" as any, onFsChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange" as any, onFsChange);
+      document.removeEventListener("mozfullscreenchange" as any, onFsChange);
+      document.removeEventListener("MSFullscreenChange" as any, onFsChange);
+    };
+  }, []);
+
+  // If modal closed while fullscreen, auto exit
+  useEffect(() => {
+    if (!slideOpen && slideIsFullscreen) {
+      exitFullscreen();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slideOpen]);
 
   async function fetchSlideSignedUrl(lessonId: string) {
     setSlideLoading(true);
@@ -1280,18 +1377,50 @@ export default function StudentDashboard() {
               <div style={{ fontWeight: 950, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis" }}>
                 Lesson {slideLesson.order}: {slideLesson.title} — Slide
               </div>
-              <button
-                style={styles.btnGhost}
-                onClick={() => {
-                  setSlideOpen(false);
-                  setSlideLesson(null);
-                  setSlideUrl("");
-                  setSlideErr("");
-                  setSlideLoading(false);
-                }}
-              >
-                Close
-              </button>
+
+              {/* ✅ Fullscreen + Open new tab + Close */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button
+                  style={styles.btnGhost}
+                  disabled={!slideUrl}
+                  title={!slideUrl ? "Chưa có URL slide" : slideIsFullscreen ? "Thoát fullscreen" : "Fullscreen"}
+                  onClick={async () => {
+                    if (!slideUrl) return;
+                    if (slideIsFullscreen) {
+                      await exitFullscreen();
+                      return;
+                    }
+                    await requestFullscreenForSlide();
+                  }}
+                >
+                  {slideIsFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                </button>
+
+                <button
+                  style={styles.btnGhost}
+                  disabled={!slideUrl}
+                  title={!slideUrl ? "Chưa có URL slide" : "Mở tab mới để xem fullscreen"}
+                  onClick={() => {
+                    if (!slideUrl) return;
+                    window.open(slideUrl, "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  Open new tab
+                </button>
+
+                <button
+                  style={styles.btnGhost}
+                  onClick={() => {
+                    setSlideOpen(false);
+                    setSlideLesson(null);
+                    setSlideUrl("");
+                    setSlideErr("");
+                    setSlideLoading(false);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
 
             <div style={styles.cardMini}>
@@ -1304,6 +1433,7 @@ export default function StudentDashboard() {
 
               {!slideLoading && !slideErr && slideUrl ? (
                 <div
+                  ref={slideFrameWrapRef}
                   style={{
                     height: "70vh",
                     borderRadius: 14,
@@ -1317,6 +1447,7 @@ export default function StudentDashboard() {
                     title="Lesson slide"
                     style={{ width: "100%", height: "100%", border: "none" }}
                     allow="fullscreen"
+                    allowFullScreen
                   />
                 </div>
               ) : null}
@@ -1331,6 +1462,13 @@ export default function StudentDashboard() {
                   >
                     Tải lại →
                   </button>
+                </div>
+              ) : null}
+
+              {/* Hint */}
+              {!slideErr && slideUrl ? (
+                <div style={styles.tiny} title="Gợi ý fullscreen">
+                  Tip: nếu browser không cho fullscreen trong modal, dùng <b>Open new tab</b> để xem toàn màn hình.
                 </div>
               ) : null}
             </div>
