@@ -192,6 +192,18 @@ function formatPracticeScore(correct: number | null, total: number | null, pct: 
   return `${correct}/${total}${pctText}`;
 }
 
+function normalizeJoinCode(input: string) {
+  return String(input || "").trim().toUpperCase();
+}
+
+function mapJoinRpcErrorMessage(errMsg: string) {
+  const m = String(errMsg || "");
+  // Supabase thường bọc message kiểu: "JOIN_CODE_NOT_FOUND" hoặc "...: JOIN_CODE_NOT_FOUND"
+  if (m.includes("JOIN_CODE_NOT_FOUND")) return "Join code không đúng hoặc lớp không tồn tại.";
+  if (m.includes("CLASS_FULL")) return "Lớp đã đủ học sinh (tối đa 2).";
+  return "";
+}
+
 export default function StudentDashboard() {
   const router = useRouter();
 
@@ -573,7 +585,7 @@ export default function StudentDashboard() {
       });
 
       // ✅ Practice attempts (latest per lesson)
-      // NOTE: table screenshot shows practice_attempts has NO class_id column, so filter by student + lessonIds
+      // NOTE: practice_attempts has NO class_id column, so filter by student + lessonIds
       let practiceRows: PracticeAttemptRow[] = [];
       if (lessonIds.length > 0) {
         const { data: pracRows, error: pracErr } = await supabase
@@ -698,8 +710,9 @@ export default function StudentDashboard() {
     router.push("/login");
   }
 
+  // ✅ FIX: Join class via RPC (SECURITY DEFINER) to avoid RLS blocking select/insert
   async function joinClassByCode() {
-    const code = String(joinCodeInput || "").trim();
+    const code = normalizeJoinCode(joinCodeInput);
     setJoinMsg(null);
 
     if (!code) {
@@ -714,62 +727,26 @@ export default function StudentDashboard() {
     setJoinLoading(true);
 
     try {
-      // 1) Find class by join_code
-      const { data: classRow, error: classErr } = await supabase
-        .from("classes")
-        .select("id,name,tutor_id,join_code,created_at")
-        .eq("join_code", code)
-        .maybeSingle();
+      // Important: RPC function name must exist in Supabase:
+      // public.join_class_by_code(p_join_code text) returns uuid
+      const { data, error } = await supabase.rpc("join_class_by_code", { p_join_code: code });
 
-      if (classErr) {
-        setJoinMsg(classErr.message || "Không tìm được lớp (có thể bị RLS chặn).");
+      if (error) {
+        const friendly = mapJoinRpcErrorMessage(error.message);
+        setJoinMsg(friendly || error.message || "Không join được lớp.");
         return;
       }
 
-      if (!classRow?.id) {
-        setJoinMsg("Join code không đúng hoặc lớp không tồn tại.");
-        return;
-      }
-
-      const classId = String(classRow.id);
-
-      // 2) Already joined?
-      const { data: existed, error: existedErr } = await supabase
-        .from("class_members")
-        .select("class_id")
-        .eq("class_id", classId)
-        .eq("student_id", userId)
-        .maybeSingle();
-
-      if (existedErr) {
-        setJoinMsg(existedErr.message || "Không kiểm tra được membership (có thể bị RLS chặn).");
-        return;
-      }
-
-      if (existed?.class_id) {
-        setJoinMsg("Bạn đã ở trong lớp này rồi.");
-        // jump to that class anyway
-        await loadStudentDashboardState({ preferActiveClassId: classId });
-        setActiveClassId(classId);
-        return;
-      }
-
-      // 3) Insert membership
-      const { error: insErr } = await supabase.from("class_members").insert({
-        class_id: classId,
-        student_id: userId,
-      });
-
-      if (insErr) {
-        // e.g. class full (max 2 students) / unique constraint / RLS
-        setJoinMsg(insErr.message || "Không join được lớp.");
+      const classId = String(data || "").trim();
+      if (!classId) {
+        setJoinMsg("Không nhận được class_id từ server. Vui lòng thử lại.");
         return;
       }
 
       setJoinMsg("✅ Join lớp thành công!");
       setJoinCodeInput("");
 
-      // 4) Reload + focus new class
+      // Reload + focus new class
       await loadStudentDashboardState({ preferActiveClassId: classId });
       setActiveClassId(classId);
       setExpandedLessonId(null);
@@ -1311,7 +1288,7 @@ export default function StudentDashboard() {
             ) : null}
 
             <div style={styles.tiny}>
-              Nếu join bị lỗi “RLS”/“permission denied”: cần policy cho <b>select classes theo join_code</b> + <b>insert class_members</b>.
+              Nếu join bị lỗi “RLS”/“permission denied”: bạn chưa tạo RPC <b>join_class_by_code</b> (SECURITY DEFINER) ở DB.
             </div>
           </div>
 
