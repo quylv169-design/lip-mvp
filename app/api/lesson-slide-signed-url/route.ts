@@ -8,18 +8,25 @@ function getEnv(name: string) {
   return v;
 }
 
-function makeSupabaseClientWithJwt(jwt: string) {
-  // Use SERVICE ROLE if available (recommended) so Storage policy doesn't block server-side signed URL.
+function getServiceRoleKey() {
+  const k = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!k) {
+    // This MUST exist in production, otherwise signed URL may be blocked by Storage policy and return "Object not found"
+    throw new Error("Missing env: SUPABASE_SERVICE_ROLE_KEY (required)");
+  }
+  return k;
+}
+
+function makeAdminClient() {
   const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const service = getServiceRoleKey();
 
-  const key = service || anon;
-  if (!key) throw new Error("Missing env: SUPABASE_SERVICE_ROLE_KEY (preferred) or NEXT_PUBLIC_SUPABASE_ANON_KEY");
-
-  return createClient(url, key, {
-    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  return createClient(url, service, {
     auth: { persistSession: false },
+    global: {
+      // No need to inject Authorization here; we will validate JWT explicitly via auth.getUser(jwt)
+      headers: {},
+    },
   });
 }
 
@@ -32,22 +39,22 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "lessonId is required" }, { status: 400 });
     }
 
-    // Verify Supabase user from Authorization: Bearer <access_token>
     const authHeader = req.headers.get("authorization") || "";
     const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
     if (!jwt) {
       return NextResponse.json({ error: "Missing Authorization bearer token" }, { status: 401 });
     }
 
-    const supabase = makeSupabaseClientWithJwt(jwt);
+    const supabase = makeAdminClient();
 
-    const { data: userRes, error: userErr } = await supabase.auth.getUser();
+    // ✅ Verify user from JWT (works with service role client)
+    const { data: userRes, error: userErr } = await supabase.auth.getUser(jwt);
     if (userErr || !userRes?.user) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 });
     }
     const userId = userRes.user.id;
 
-    // Load profile role
+    // Load profile role (service role bypasses RLS; still OK because we enforce auth below)
     const { data: profile, error: profileErr } = await supabase
       .from("profiles")
       .select("id, role")
@@ -119,13 +126,20 @@ export async function GET(req: Request) {
     // Signed URL: 30 minutes
     const expiresIn = 60 * 30;
 
+    // ✅ Service role -> createSignedUrl won't be blocked by Storage policy
     const { data: signed, error: signedErr } = await supabase.storage
       .from("slides")
       .createSignedUrl(lesson.slide_path, expiresIn);
 
     if (signedErr || !signed?.signedUrl) {
       return NextResponse.json(
-        { error: signedErr?.message || "Failed to create signed URL" },
+        {
+          error: signedErr?.message || "Failed to create signed URL",
+          details: {
+            slidePath: lesson.slide_path,
+            bucket: "slides",
+          },
+        },
         { status: 500 }
       );
     }

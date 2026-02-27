@@ -66,16 +66,7 @@ function safeParseRole(p: Participant): string | null {
   }
 }
 
-/**
- * IMPORTANT:
- * Do NOT rely on metadata role to decide who can Present.
- * Metadata can be missing / stale / or you may be logged-in as the wrong account.
- *
- * The only stable truth for "who is tutor of this class" is: participant.identity === tutorId.
- * We still keep metadata as a fallback for UI labels.
- */
-function isTutor(p: Participant, tutorId?: string) {
-  if (tutorId && p.identity && p.identity === tutorId) return true;
+function isTutorByRole(p: Participant) {
   const r = safeParseRole(p);
   return r === "tutor";
 }
@@ -258,15 +249,9 @@ function CameraTileByPub({
 }
 
 /** Overlay (name + role) reused */
-function TileFooter({
-  participant,
-  tutorId,
-}: {
-  participant: Participant;
-  tutorId?: string;
-}) {
+function TileFooter({ participant }: { participant: Participant }) {
   const name = labelOf(participant);
-  const role = isTutor(participant, tutorId) ? "Tutor" : "Student";
+  const role = isTutorByRole(participant) ? "Tutor" : "Student";
 
   return (
     <div
@@ -286,16 +271,14 @@ function TileFooter({
         fontSize: 12,
       }}
     >
-      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {name}
-      </div>
+      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
       <div
         style={{
           fontSize: 11,
           padding: "2px 8px",
           borderRadius: 999,
           border: "1px solid rgba(255,255,255,0.14)",
-          background: isTutor(participant, tutorId)
+          background: isTutorByRole(participant)
             ? "rgba(120,170,255,0.12)"
             : "rgba(255,255,255,0.06)",
           opacity: 0.95,
@@ -360,7 +343,6 @@ function AutoDisconnectOnUnload() {
 /**
  * Local controls:
  * - ALL users: Mic + Cam toggle
- * (NO screenshare anymore)
  */
 function LocalControls() {
   const room = useRoomContext();
@@ -447,20 +429,10 @@ type SlideStateMsg = {
 };
 
 /** Center board: Slide presenter (Tutor controls, students follow) */
-function Board({
-  classId,
-  tutorId,
-  identity,
-}: {
-  classId: string;
-  tutorId?: string;
-  identity?: string;
-}) {
+function Board({ classId }: { classId: string }) {
   const room = useRoomContext();
   const local = room?.localParticipant;
-
-  // ✅ hard rule: only the class tutor can Present
-  const meIsTutor = !!identity && !!tutorId && identity === tutorId;
+  const meIsTutor = !!local && isTutorByRole(local);
 
   const btnBase: React.CSSProperties = {
     fontFamily: UI_FONT,
@@ -483,11 +455,12 @@ function Board({
 
   const [selectedLessonId, setSelectedLessonId] = useState<string>("");
   const [slideUrl, setSlideUrl] = useState<string>("");
-  const [slideErr, setSlideErr] = useState<string>("");
+  const [slideError, setSlideError] = useState<string>("");
+
   const [page, setPage] = useState<number>(1);
   const [presenting, setPresenting] = useState(false);
 
-  // Keep last received state for students (or even tutor who joins later)
+  // Students follow
   const [followLessonId, setFollowLessonId] = useState<string>("");
   const [followPage, setFollowPage] = useState<number>(1);
 
@@ -516,11 +489,11 @@ function Board({
         return;
       }
 
-      setLessons((data as LessonRow[]) || []);
+      const arr = (data as LessonRow[]) || [];
+      setLessons(arr);
 
-      // auto pick first lesson if empty
-      if (!selectedLessonId && data && data.length > 0) {
-        setSelectedLessonId((data[0] as any).id);
+      if (!selectedLessonId && arr.length > 0) {
+        setSelectedLessonId(arr[0].id);
       }
     } finally {
       setLessonLoading(false);
@@ -528,23 +501,16 @@ function Board({
   }
 
   async function fetchSignedUrl(lessonId: string) {
-    if (!lessonId) return "";
+    if (!lessonId) return { url: "", error: "" };
 
     try {
-      setSlideErr("");
-
-      // ✅ MUST send Authorization header (your API requires it)
       const { data: sessionRes, error: sessErr } = await supabase.auth.getSession();
       if (sessErr) {
         console.error(sessErr);
-        setSlideErr(sessErr.message || "Failed to get session");
-        return "";
+        return { url: "", error: "No session" };
       }
       const accessToken = sessionRes.session?.access_token;
-      if (!accessToken) {
-        setSlideErr("Missing access token (not logged in)");
-        return "";
-      }
+      if (!accessToken) return { url: "", error: "No access token" };
 
       const res = await fetch(
         `/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`,
@@ -557,27 +523,19 @@ function Board({
         }
       );
 
-      const json = await res.json().catch(() => ({} as any));
+      const json = await res.json();
 
       if (!res.ok) {
-        const msg = String(json?.error || `Failed to get signed url (HTTP ${res.status})`);
-        console.error(msg);
-        setSlideErr(msg);
-        return "";
+        const msg = String(json?.error || "Failed to get signed url");
+        return { url: "", error: msg };
       }
 
-      // ✅ Your API returns { url }, not { signedUrl }
       const url = String(json?.url || json?.signedUrl || "");
-      if (!url) {
-        setSlideErr("Signed URL is empty");
-        return "";
-      }
-
-      return url;
+      if (!url) return { url: "", error: "Empty signed url" };
+      return { url, error: "" };
     } catch (e: any) {
       console.error(e);
-      setSlideErr(e?.message || "Failed to get signed URL");
-      return "";
+      return { url: "", error: e?.message || "Fetch failed" };
     }
   }
 
@@ -586,7 +544,7 @@ function Board({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
 
-  // LiveKit data channel: receive slide_state
+  // LiveKit data: receive slide_state for students
   useEffect(() => {
     if (!room) return;
 
@@ -596,11 +554,9 @@ function Board({
         const obj = JSON.parse(decoded) as any;
 
         if (obj?.type !== "slide_state") return;
-
         const msg = obj as SlideStateMsg;
-        if (!msg.lessonId || typeof msg.page !== "number") return;
 
-        // Students follow; tutor ignores incoming
+        if (!msg.lessonId || typeof msg.page !== "number") return;
         if (meIsTutor) return;
 
         setFollowLessonId(msg.lessonId);
@@ -616,38 +572,37 @@ function Board({
     };
   }, [room, meIsTutor]);
 
-  // When effective lesson changes (tutor selected OR student follows), fetch signed URL on this client
+  // Whenever effectiveLesson changes, fetch signed URL
   useEffect(() => {
     if (!effectiveLessonId) {
       setSlideUrl("");
-      setSlideErr("");
+      setSlideError("");
       return;
     }
 
-    let cancelled = false;
     (async () => {
-      const url = await fetchSignedUrl(effectiveLessonId);
-      if (cancelled) return;
+      setSlideError("");
+      const { url, error } = await fetchSignedUrl(effectiveLessonId);
+      if (error) {
+        setSlideUrl("");
+        setSlideError(error);
+        return;
+      }
       setSlideUrl(url);
+      setSlideError("");
     })();
-
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveLessonId]);
 
-  // Tutor: broadcast current state (lessonId + page) so all students sync
+  // Tutor broadcast state
   const broadcastState = async (nextLessonId: string, nextPage: number) => {
     if (!room) return;
-
     const payload: SlideStateMsg = {
       type: "slide_state",
       lessonId: nextLessonId,
       page: Math.max(1, nextPage),
       ts: Date.now(),
     };
-
     try {
       const bytes = new TextEncoder().encode(JSON.stringify(payload));
       room.localParticipant.publishData(bytes, { reliable: true });
@@ -656,16 +611,25 @@ function Board({
     }
   };
 
-  // Tutor: start presenting -> push state so students instantly sync
   const startPresenting = async () => {
     if (!meIsTutor) return;
     const lessonId = selectedLessonId;
     if (!lessonId) return;
 
+    // ✅ Force refetch slide URL for tutor right when presenting (avoid stale / policy edge cases)
+    setSlideError("");
+    const { url, error } = await fetchSignedUrl(lessonId);
+    if (error) {
+      setSlideUrl("");
+      setSlideError(error);
+      return;
+    }
+    setSlideUrl(url);
+    setSlideError("");
+
     setPresenting(true);
     const safePage = Math.max(1, page);
     setPage(safePage);
-
     await broadcastState(lessonId, safePage);
   };
 
@@ -673,12 +637,10 @@ function Board({
     setPresenting(false);
   };
 
-  // Tutor: when changing lesson/page while presenting, broadcast
   useEffect(() => {
     if (!meIsTutor) return;
     if (!presenting) return;
     if (!selectedLessonId) return;
-
     broadcastState(selectedLessonId, page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meIsTutor, presenting, selectedLessonId, page]);
@@ -702,7 +664,6 @@ function Board({
           <LeaveButton to="/app" />
           <LocalControls />
 
-          {/* Slide controls */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>Slide</div>
 
@@ -713,6 +674,7 @@ function Board({
                 const v = e.target.value;
                 setSelectedLessonId(v);
                 setPage(1);
+                setSlideError("");
               }}
               style={{
                 fontFamily: UI_FONT,
@@ -878,7 +840,7 @@ function Board({
       >
         {hasSlide ? (
           <iframe
-            key={`${effectiveLessonId}-${slideUrl}`} // reload when lesson changes
+            key={`${effectiveLessonId}-${slideUrl}`}
             src={effectiveSlideSrc}
             title="Slide"
             style={{
@@ -919,25 +881,23 @@ function Board({
                 )}
               </div>
 
-              {!!slideErr && (
+              {slideError ? (
                 <div
                   style={{
                     marginTop: 12,
-                    fontSize: 12,
-                    lineHeight: 1.5,
                     padding: "10px 12px",
                     borderRadius: 12,
-                    border: "1px solid rgba(255,80,80,0.35)",
-                    background: "rgba(255,80,80,0.10)",
-                    color: "rgba(255,255,255,0.92)",
+                    border: "1px solid rgba(255,90,90,0.35)",
+                    background: "rgba(255,90,90,0.10)",
+                    color: "rgba(255,230,230,0.95)",
+                    fontSize: 13,
                     textAlign: "left",
-                    wordBreak: "break-word",
                   }}
                 >
                   <div style={{ fontWeight: 900, marginBottom: 4 }}>Slide load error</div>
-                  <div style={{ opacity: 0.95 }}>{slideErr}</div>
+                  <div style={{ opacity: 0.95 }}>{slideError}</div>
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         )}
@@ -958,7 +918,6 @@ function useSimpleChat(room: Room | undefined) {
         const decoded = new TextDecoder().decode(payload);
         const obj = JSON.parse(decoded) as any;
 
-        // Ignore slide state messages here (they are handled in Board)
         if (obj?.type === "slide_state") return;
 
         const msg = obj as { t: string; ts: number };
@@ -967,9 +926,7 @@ function useSimpleChat(room: Room | undefined) {
         setMessages((prev) => [
           ...prev,
           {
-            id: `${msg.ts}-${participant?.identity ?? "unknown"}-${Math.random()
-              .toString(16)
-              .slice(2)}`,
+            id: `${msg.ts}-${participant?.identity ?? "unknown"}-${Math.random().toString(16).slice(2)}`,
             ts: msg.ts,
             from: participant ? labelOf(participant) : "system",
             text: msg.t,
@@ -994,21 +951,17 @@ function useSimpleChat(room: Room | undefined) {
     const payload = new TextEncoder().encode(JSON.stringify({ t, ts: Date.now() }));
     room.localParticipant.publishData(payload, { reliable: true });
 
-    setMessages((prev) => [
-      ...prev,
-      { id: `${Date.now()}-me`, ts: Date.now(), from: "Me", text: t },
-    ]);
+    setMessages((prev) => [...prev, { id: `${Date.now()}-me`, ts: Date.now(), from: "Me", text: t }]);
     setText("");
   };
 
   return { messages, text, setText, send };
 }
 
-function RightColumn({ tutorId }: { tutorId?: string }) {
+function RightColumn() {
   const room = useRoomContext();
   const { messages, text, setText, send } = useSimpleChat(room);
 
-  // Stable camera publications (includes local + remote)
   const camTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: false }], {
     onlySubscribed: false,
   });
@@ -1017,13 +970,13 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
 
   const top3 = useMemo(() => {
     const sorted = [...all].sort((a, b) => {
-      const aIsTutor = isTutor(a, tutorId);
-      const bIsTutor = isTutor(b, tutorId);
+      const aIsTutor = isTutorByRole(a);
+      const bIsTutor = isTutorByRole(b);
       if (aIsTutor === bIsTutor) return 0;
       return aIsTutor ? -1 : 1;
     });
     return sorted.slice(0, 3);
-  }, [all, tutorId]);
+  }, [all]);
 
   const tiles: Array<Participant | null> = [...top3];
   while (tiles.length < 3) tiles.push(null);
@@ -1058,7 +1011,7 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
             p ? (
               <div key={p.identity} style={{ height: 110, position: "relative" }}>
                 <CameraTileByPub participant={p} publication={pubByIdentity.get(p.identity)} />
-                <TileFooter participant={p} tutorId={tutorId} />
+                <TileFooter participant={p} />
               </div>
             ) : (
               <div
@@ -1151,15 +1104,7 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
   );
 }
 
-function MinimalClassroomUI({
-  classId,
-  tutorId,
-  identity,
-}: {
-  classId: string;
-  tutorId?: string;
-  identity?: string;
-}) {
+function MinimalClassroomUI({ classId }: { classId: string }) {
   return (
     <div
       style={{
@@ -1175,7 +1120,7 @@ function MinimalClassroomUI({
       }}
     >
       <div style={{ padding: 12, minWidth: 0, minHeight: 0 }}>
-        <Board classId={classId} tutorId={tutorId} identity={identity} />
+        <Board classId={classId} />
       </div>
 
       <div
@@ -1186,7 +1131,7 @@ function MinimalClassroomUI({
           overflow: "hidden",
         }}
       >
-        <RightColumn tutorId={tutorId} />
+        <RightColumn />
       </div>
     </div>
   );
@@ -1199,7 +1144,6 @@ export default function ClassroomClient({ classId }: Props) {
   const [err, setErr] = useState<string>("");
   const [info, setInfo] = useState<TokenInfo | null>(null);
 
-  // IMPORTANT: all hooks must be BEFORE any return (avoid hook-order bug)
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -1262,11 +1206,7 @@ export default function ClassroomClient({ classId }: Props) {
     >
       <RoomAudioRenderer />
       <AutoDisconnectOnUnload />
-      <MinimalClassroomUI
-        classId={classId}
-        tutorId={info?.tutorId}
-        identity={info?.identity}
-      />
+      <MinimalClassroomUI classId={classId} />
     </LiveKitRoom>
   );
 }
