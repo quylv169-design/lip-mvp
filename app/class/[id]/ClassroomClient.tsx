@@ -71,6 +71,14 @@ function isTutorByRole(p: Participant) {
   return r === "tutor";
 }
 
+// ✅ Robust tutor check: role OR identity matches tutorId from server
+function isTutorParticipant(p: Participant | undefined, tutorId?: string) {
+  if (!p) return false;
+  if (isTutorByRole(p)) return true;
+  if (tutorId && p.identity && p.identity === tutorId) return true;
+  return false;
+}
+
 /**
  * LiveKit remoteParticipants is a Map that may mutate in-place.
  * useMemo deps won't update => empty slots bug.
@@ -249,9 +257,9 @@ function CameraTileByPub({
 }
 
 /** Overlay (name + role) reused */
-function TileFooter({ participant }: { participant: Participant }) {
+function TileFooter({ participant, tutorId }: { participant: Participant; tutorId?: string }) {
   const name = labelOf(participant);
-  const role = isTutorByRole(participant) ? "Tutor" : "Student";
+  const role = isTutorParticipant(participant, tutorId) ? "Tutor" : "Student";
 
   return (
     <div
@@ -278,7 +286,7 @@ function TileFooter({ participant }: { participant: Participant }) {
           padding: "2px 8px",
           borderRadius: 999,
           border: "1px solid rgba(255,255,255,0.14)",
-          background: isTutorByRole(participant)
+          background: isTutorParticipant(participant, tutorId)
             ? "rgba(120,170,255,0.12)"
             : "rgba(255,255,255,0.06)",
           opacity: 0.95,
@@ -430,10 +438,12 @@ type SlideStateMsg = {
 };
 
 /** Center board: Slide presenter (Tutor controls, students follow) */
-function Board({ classId }: { classId: string }) {
+function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
   const room = useRoomContext();
   const local = room?.localParticipant;
-  const meIsTutor = !!local && isTutorByRole(local);
+
+  // ✅ robust tutor detection
+  const meIsTutor = isTutorParticipant(local ?? undefined, tutorId);
 
   const btnBase: React.CSSProperties = {
     fontFamily: UI_FONT,
@@ -485,12 +495,11 @@ function Board({ classId }: { classId: string }) {
         .order("order_index", { ascending: true });
 
       if (error) {
-        console.error("[Board] fetch lessons error:", error);
+        console.error(error);
         setLessons([]);
         return;
       }
       setLessons((data as LessonRow[]) || []);
-
       // auto pick first lesson if empty
       if (!selectedLessonId && data && data.length > 0) {
         setSelectedLessonId((data[0] as any).id);
@@ -503,7 +512,6 @@ function Board({ classId }: { classId: string }) {
   async function fetchSignedUrl(lessonId: string) {
     if (!lessonId) return "";
 
-    // ✅ IMPORTANT: use Bearer token like /api/livekit-token
     const { data: sess } = await supabase.auth.getSession();
     const accessToken = sess.session?.access_token;
 
@@ -524,7 +532,6 @@ function Board({ classId }: { classId: string }) {
       );
 
       const json = await res.json().catch(() => ({} as any));
-
       if (!res.ok) {
         console.error(
           "[Board] lesson-slide-signed-url failed:",
@@ -535,12 +542,9 @@ function Board({ classId }: { classId: string }) {
       }
 
       const url = String(json?.signedUrl || "");
-      if (!url) {
-        console.error("[Board] signedUrl is empty. Response:", json);
-      }
       return url;
     } catch (e) {
-      console.error("[Board] fetchSignedUrl exception:", e);
+      console.error(e);
       return "";
     }
   }
@@ -612,7 +616,7 @@ function Board({ classId }: { classId: string }) {
     }
   };
 
-  // Tutor: start presenting -> push state so students instantly sync (they will fetch signedUrl themselves)
+  // Tutor: start presenting -> push state so students instantly sync
   const startPresenting = async () => {
     if (!meIsTutor) return;
     const lessonId = selectedLessonId;
@@ -625,7 +629,6 @@ function Board({ classId }: { classId: string }) {
   };
 
   const stopPresenting = async () => {
-    // MVP: keep last state; stopping just disables tutor controls
     setPresenting(false);
   };
 
@@ -792,15 +795,7 @@ function Board({ classId }: { classId: string }) {
                 }}
               />
               {lessonTitle ? (
-                <span
-                  style={{
-                    opacity: 0.7,
-                    whiteSpace: "nowrap",
-                    maxWidth: 260,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
+                <span style={{ opacity: 0.7, whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
                   • {lessonTitle}
                 </span>
               ) : null}
@@ -935,7 +930,7 @@ function useSimpleChat(room: Room | undefined) {
   return { messages, text, setText, send };
 }
 
-function RightColumn() {
+function RightColumn({ tutorId }: { tutorId?: string }) {
   const room = useRoomContext();
   const { messages, text, setText, send } = useSimpleChat(room);
 
@@ -948,13 +943,13 @@ function RightColumn() {
 
   const top3 = useMemo(() => {
     const sorted = [...all].sort((a, b) => {
-      const aIsTutor = isTutorByRole(a);
-      const bIsTutor = isTutorByRole(b);
+      const aIsTutor = isTutorParticipant(a, tutorId);
+      const bIsTutor = isTutorParticipant(b, tutorId);
       if (aIsTutor === bIsTutor) return 0;
       return aIsTutor ? -1 : 1;
     });
     return sorted.slice(0, 3);
-  }, [all]);
+  }, [all, tutorId]);
 
   const tiles: Array<Participant | null> = [...top3];
   while (tiles.length < 3) tiles.push(null);
@@ -989,7 +984,7 @@ function RightColumn() {
             p ? (
               <div key={p.identity} style={{ height: 110, position: "relative" }}>
                 <CameraTileByPub participant={p} publication={pubByIdentity.get(p.identity)} />
-                <TileFooter participant={p} />
+                <TileFooter participant={p} tutorId={tutorId} />
               </div>
             ) : (
               <div
@@ -1082,7 +1077,7 @@ function RightColumn() {
   );
 }
 
-function MinimalClassroomUI({ classId }: { classId: string }) {
+function MinimalClassroomUI({ classId, tutorId }: { classId: string; tutorId?: string }) {
   return (
     <div
       style={{
@@ -1098,7 +1093,7 @@ function MinimalClassroomUI({ classId }: { classId: string }) {
       }}
     >
       <div style={{ padding: 12, minWidth: 0, minHeight: 0 }}>
-        <Board classId={classId} />
+        <Board classId={classId} tutorId={tutorId} />
       </div>
 
       <div
@@ -1109,7 +1104,7 @@ function MinimalClassroomUI({ classId }: { classId: string }) {
           overflow: "hidden",
         }}
       >
-        <RightColumn />
+        <RightColumn tutorId={tutorId} />
       </div>
     </div>
   );
@@ -1185,7 +1180,7 @@ export default function ClassroomClient({ classId }: Props) {
     >
       <RoomAudioRenderer />
       <AutoDisconnectOnUnload />
-      <MinimalClassroomUI classId={classId} />
+      <MinimalClassroomUI classId={classId} tutorId={info?.tutorId} />
     </LiveKitRoom>
   );
 }
