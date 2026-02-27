@@ -481,7 +481,7 @@ export default function VocabularyPage() {
     writeLocalCache(storedWords, mastery);
   }, [storedWords, mastery, hydrated, userId]);
 
-  // ---------- Cooldown state (now used ONLY for "graded submit") ----------
+  // ---------- Cooldown state (ONLY for "graded submit") ----------
   const [cooldownLeftMs, setCooldownLeftMs] = useState<number>(0);
   const [lastSubmitMs, setLastSubmitMs] = useState<number>(0);
 
@@ -952,7 +952,7 @@ export default function VocabularyPage() {
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [quizResult, setQuizResult] = useState<{ correct: number; total: number } | null>(null);
 
-  // ✅ New: whether this attempt is a "graded submit" (saved to system)
+  // ✅ whether this attempt is a "graded submit" (saved to system)
   const [isGradedAttempt, setIsGradedAttempt] = useState<boolean>(false);
 
   // open question panel by sense (word+pos)
@@ -1100,6 +1100,14 @@ export default function VocabularyPage() {
     });
     return ordered;
   }, [quizQuestions, storedWords]);
+
+  // ✅ Progress line: total words / done words (done = selected all POS for that word)
+  const practiceProgress = useMemo(() => {
+    if (!quizStarted) return null;
+    const total = quizByWord.length;
+    const done = quizByWord.filter((it) => it.questions.length > 0 && it.questions.every((q) => q.selectedIndex != null)).length;
+    return { done, total };
+  }, [quizStarted, quizByWord]);
 
   // ---------- UI ----------
   return (
@@ -1413,6 +1421,13 @@ export default function VocabularyPage() {
           </button>
         </div>
 
+        {/* ✅ New: progress line (exactly under Start/Submit) */}
+        {practiceProgress ? (
+          <div style={styles.tiny}>
+            Tiến độ lượt này: <b>{practiceProgress.done}</b>/<b>{practiceProgress.total}</b> từ đã làm (đã chọn đủ tất cả POS).
+          </div>
+        ) : null}
+
         {quizResult ? (
           <div style={styles.muted}>
             Kết quả: <b>{quizResult.correct}</b>/<b>{quizResult.total}</b> câu đúng. &nbsp;•&nbsp;{" "}
@@ -1457,16 +1472,30 @@ export default function VocabularyPage() {
                       {it.questions.map((q) => {
                         const key = `${q.wordId}:${q.senseId}`;
                         const isOpen = openQKey === key;
+
+                        // keep suffix only after submit (so it won't be confused with active state)
                         const chipSuffix = quizSubmitted && q.isCorrect != null ? (q.isCorrect ? "✅" : "❌") : "";
+
+                        // ✅ UX fix: active chip keeps clear border + ring highlight (no ✅, no ❌)
+                        const chipStyle: React.CSSProperties = isOpen
+                          ? {
+                              ...styles.chip,
+                              border: "2px solid rgba(255,255,255,0.55)",
+                              background: "rgba(255,255,255,0.10)",
+                              boxShadow: "0 0 0 3px rgba(255,255,255,0.06)",
+                              fontWeight: 950,
+                            }
+                          : {
+                              ...styles.chip,
+                              border: "1px solid var(--border)",
+                              background: "rgba(255,255,255,0.04)",
+                              boxShadow: "none",
+                            };
 
                         return (
                           <div
                             key={q.senseId}
-                            style={{
-                              ...styles.chip,
-                              border: isOpen ? "1px solid rgba(255,255,255,0.45)" : (styles.chip.border as any),
-                              background: isOpen ? "rgba(255,255,255,0.08)" : (styles.chip.background as any),
-                            }}
+                            style={chipStyle}
                             onClick={() => setOpenQKey((prev) => (prev === key ? null : key))}
                             title="Open quiz for this POS"
                           >
