@@ -13,6 +13,13 @@ function getEnv(name: string) {
   return v;
 }
 
+function normalizeRole(input: any): "admin" | "tutor" | "student" | null {
+  if (typeof input !== "string") return null;
+  const r = input.trim().toLowerCase();
+  if (r === "admin" || r === "tutor" || r === "student") return r;
+  return null;
+}
+
 export async function POST(req: Request) {
   try {
     const { classId } = (await req.json()) as Body;
@@ -64,18 +71,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
 
-    const isTutor = klass.tutor_id === userId; // ✅ SOURCE OF TRUTH
-    const isAdmin = String((profile as any).role || "") === "admin";
+    // ✅ FIX CỐT LÕI:
+    // Nếu profiles.role bị sai (vd: bị ghi thành UUID tutor_id), ta tự suy ra:
+    // - Nếu userId === classes.tutor_id => tutor
+    // - else => student
+    const normalized = normalizeRole((profile as any).role);
+    let roleToUse: "admin" | "tutor" | "student" =
+      normalized ??
+      (klass.tutor_id === userId ? "tutor" : "student");
 
+    // Admin luôn được join
     let allowed = false;
+    if (roleToUse === "admin") {
+      allowed = true;
+    }
 
-    // Admin always allowed (optional but sane)
-    if (isAdmin) allowed = true;
+    // tutor is allowed if owns this class
+    if (!allowed && roleToUse === "tutor" && klass.tutor_id === userId) {
+      allowed = true;
+    }
 
-    // Tutor allowed if owns this class (SOURCE OF TRUTH)
-    if (!allowed && isTutor) allowed = true;
-
-    // Student allowed if exists in class_members
+    // student is allowed if exists in class_members
     if (!allowed) {
       const { data: member, error: memberErr } = await supabase
         .from("class_members")
@@ -99,21 +115,13 @@ export async function POST(req: Request) {
         ? (profile as any).full_name.trim()
         : userId;
 
-    // ✅ role written into metadata is now stable:
-    // - tutor is based on classes.tutor_id (NOT profiles.role)
-    // - admin stays admin
-    // - otherwise student
-    const stableRole: "admin" | "tutor" | "student" = isAdmin ? "admin" : isTutor ? "tutor" : "student";
-
     const at = new AccessToken(getEnv("LIVEKIT_API_KEY"), getEnv("LIVEKIT_API_SECRET"), {
       identity: userId,
       name: fullName,
       metadata: JSON.stringify({
-        role: stableRole,
+        role: roleToUse,          // ✅ luôn là "tutor"/"student"/"admin"
         full_name: fullName,
-        // helpful debug fields
-        tutor_id: klass.tutor_id,
-        class_id: classId,
+        tutor_id: klass.tutor_id, // ✅ thêm để client có thể suy luận chắc chắn
       }),
     });
 
@@ -132,8 +140,7 @@ export async function POST(req: Request) {
       roomName,
       identity: userId,
       tutorId: klass.tutor_id,
-      isTutor, // ✅ client can trust this
-      role: stableRole,
+      role: roleToUse,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
