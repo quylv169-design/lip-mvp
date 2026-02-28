@@ -28,7 +28,9 @@ type TokenInfo = {
   token: string;
   tutorId?: string;
   identity?: string;
-  role?: string;
+  // ✅ crucial: don't rely on LiveKit metadata timing for local privileges
+  role?: string | null;
+  meIsTutor?: boolean;
 };
 
 type ChatMsg = {
@@ -52,6 +54,7 @@ const UI_FONT =
   'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"';
 
 function labelOf(p: Participant) {
+  // IMPORTANT: full name comes from token "name"
   return (p.name && p.name.trim()) || p.identity || "user";
 }
 
@@ -66,16 +69,16 @@ function safeParseRole(p: Participant): string | null {
   }
 }
 
-// ✅ Tutor detection MUST be stable:
-// - role === "tutor" OR
-// - identity === tutorId (the class owner)
-function isTutor(p: Participant, tutorId?: string) {
+function isTutorByRole(p: Participant) {
   const r = safeParseRole(p);
-  if (r === "tutor") return true;
-  if (tutorId && p.identity === tutorId) return true;
-  return false;
+  return r === "tutor";
 }
 
+/**
+ * LiveKit remoteParticipants is a Map that may mutate in-place.
+ * useMemo deps won't update => empty slots bug.
+ * So we subscribe to participant events to force rerender.
+ */
 function useAllParticipants(room: Room | undefined) {
   const [, force] = useState(0);
 
@@ -94,6 +97,7 @@ function useAllParticipants(room: Room | undefined) {
     room.on(RoomEvent.ParticipantMetadataChanged, bump);
     room.on(RoomEvent.ParticipantNameChanged, bump);
 
+    // local track changes
     room.on(RoomEvent.LocalTrackPublished, bump);
     room.on(RoomEvent.LocalTrackUnpublished, bump);
     room.on(RoomEvent.TrackMuted, bump);
@@ -126,6 +130,8 @@ function useAllParticipants(room: Room | undefined) {
 function getEnabledState(p: LocalParticipant, source: Track.Source) {
   const pub = p.getTrackPublication(source);
   if (!pub) return false;
+
+  // Publication exists but could be muted
   const muted = (pub as any).isMuted === true;
   return !muted;
 }
@@ -160,6 +166,10 @@ function useLocalMediaState(room: Room | undefined) {
   return { camOn, micOn };
 }
 
+/**
+ * Camera tile using LiveKit track publication object.
+ * This is more stable for LocalParticipant (student seeing own camera).
+ */
 function CameraTileByPub({
   participant,
   publication,
@@ -241,9 +251,24 @@ function CameraTileByPub({
   );
 }
 
-function TileFooter({ participant, tutorId }: { participant: Participant; tutorId?: string }) {
+/** Overlay (name + role) reused */
+function TileFooter({
+  participant,
+  meIsTutorOverride,
+}: {
+  participant: Participant;
+  meIsTutorOverride?: boolean;
+}) {
   const name = labelOf(participant);
-  const role = isTutor(participant, tutorId) ? "Tutor" : "Student";
+
+  const isMe =
+    participant instanceof LocalParticipant ||
+    (participant.identity && participant.identity === (participant as any).room?.localParticipant?.identity);
+
+  // ✅ For local user, trust server-derived role (override). For others, use metadata.
+  const isTutor = isMe && typeof meIsTutorOverride === "boolean" ? meIsTutorOverride : isTutorByRole(participant);
+
+  const role = isTutor ? "Tutor" : "Student";
 
   return (
     <div
@@ -263,18 +288,14 @@ function TileFooter({ participant, tutorId }: { participant: Participant; tutorI
         fontSize: 12,
       }}
     >
-      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {name}
-      </div>
+      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
       <div
         style={{
           fontSize: 11,
           padding: "2px 8px",
           borderRadius: 999,
           border: "1px solid rgba(255,255,255,0.14)",
-          background: isTutor(participant, tutorId)
-            ? "rgba(120,170,255,0.12)"
-            : "rgba(255,255,255,0.06)",
+          background: isTutor ? "rgba(120,170,255,0.12)" : "rgba(255,255,255,0.06)",
           opacity: 0.95,
           flex: "none",
         }}
@@ -285,6 +306,7 @@ function TileFooter({ participant, tutorId }: { participant: Participant; tutorI
   );
 }
 
+/** Button to leave class: disconnect room then go back */
 function LeaveButton({ to = "/app" }: { to?: string }) {
   const router = useRouter();
   const room = useRoomContext();
@@ -315,6 +337,7 @@ function LeaveButton({ to = "/app" }: { to?: string }) {
   );
 }
 
+/** Best-effort disconnect on refresh/close */
 function AutoDisconnectOnUnload() {
   const room = useRoomContext();
 
@@ -332,6 +355,11 @@ function AutoDisconnectOnUnload() {
   return null;
 }
 
+/**
+ * Local controls:
+ * - ALL users: Mic + Cam toggle
+ * (NO screenshare anymore)
+ */
 function LocalControls() {
   const room = useRoomContext();
   const local = room?.localParticipant;
@@ -416,12 +444,15 @@ type SlideStateMsg = {
   ts: number;
 };
 
-function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
+/** Center board: Slide presenter (Tutor controls, students follow) */
+function Board({
+  classId,
+  meIsTutor,
+}: {
+  classId: string;
+  meIsTutor: boolean;
+}) {
   const room = useRoomContext();
-  const local = room?.localParticipant;
-
-  // ✅ stable tutor detection (role OR identity match)
-  const meIsTutor = !!local && isTutor(local, tutorId);
 
   const btnBase: React.CSSProperties = {
     fontFamily: UI_FONT,
@@ -439,24 +470,29 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
     userSelect: "none",
   };
 
+  // Lessons list (so tutor can pick correct lesson / slide)
   const [lessons, setLessons] = useState<LessonRow[]>([]);
   const [lessonLoading, setLessonLoading] = useState(false);
 
   const [selectedLessonId, setSelectedLessonId] = useState<string>("");
   const [slideUrl, setSlideUrl] = useState<string>("");
   const [slideErr, setSlideErr] = useState<string>("");
-
   const [page, setPage] = useState<number>(1);
   const [presenting, setPresenting] = useState(false);
 
+  // Keep last received state for students (or even tutor who joins later)
   const [followLessonId, setFollowLessonId] = useState<string>("");
   const [followPage, setFollowPage] = useState<number>(1);
 
+  // ✅ IMPORTANT:
+  // - Tutor uses selectedLessonId/page
+  // - Student uses followLessonId/followPage
   const effectiveLessonId = meIsTutor ? selectedLessonId : followLessonId;
   const effectivePage = meIsTutor ? page : followPage;
 
   const effectiveSlideSrc = useMemo(() => {
     if (!slideUrl) return "";
+    // PDF page hint: many built-in PDF viewers respect #page
     const hash = `#page=${Math.max(1, effectivePage)}`;
     return slideUrl.includes("#") ? slideUrl : `${slideUrl}${hash}`;
   }, [slideUrl, effectivePage]);
@@ -476,60 +512,66 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
         setLessons([]);
         return;
       }
-
-      const rows = (data as LessonRow[]) || [];
-      setLessons(rows);
-
-      if (!selectedLessonId && rows.length > 0) {
-        setSelectedLessonId(rows[0].id);
+      setLessons((data as LessonRow[]) || []);
+      // auto pick first lesson if empty
+      if (!selectedLessonId && data && data.length > 0) {
+        setSelectedLessonId((data[0] as any).id);
       }
     } finally {
       setLessonLoading(false);
     }
   }
 
-  async function fetchSignedUrl(lessonId: string): Promise<{ url: string; error?: string }> {
-    if (!lessonId) return { url: "", error: "Missing lessonId" };
+  async function fetchSignedUrl(lessonId: string) {
+    if (!lessonId) return { url: "", err: "" };
 
     try {
+      setSlideErr("");
+
+      // ✅ MUST send Authorization header (your API requires it)
       const { data: sessionRes, error: sessErr } = await supabase.auth.getSession();
       if (sessErr) {
         console.error(sessErr);
-        return { url: "", error: sessErr.message };
+        return { url: "", err: "Missing session" };
       }
       const accessToken = sessionRes.session?.access_token;
-      if (!accessToken) return { url: "", error: "Missing session access token" };
+      if (!accessToken) return { url: "", err: "Missing access token" };
 
       const res = await fetch(
         `/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`,
         {
           method: "GET",
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
           cache: "no-store",
         }
       );
 
-      const json = await res.json().catch(() => ({}));
+      const json = await res.json();
 
       if (!res.ok) {
-        const msg = String(json?.error || `HTTP ${res.status}`);
-        return { url: "", error: msg };
+        const msg = String(json?.error || "Failed to get signed url");
+        console.error(msg);
+        return { url: "", err: msg };
       }
 
+      // ✅ Your API returns { url }, not { signedUrl }
       const url = String(json?.url || json?.signedUrl || "");
-      if (!url) return { url: "", error: "Signed URL missing in response" };
-      return { url };
-    } catch (e: any) {
+      return { url, err: "" };
+    } catch (e) {
       console.error(e);
-      return { url: "", error: e?.message || "Failed to fetch signed url" };
+      return { url: "", err: "Failed to get signed url" };
     }
   }
 
+  // Load lessons list
   useEffect(() => {
     fetchLessonsOnce();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
 
+  // LiveKit data channel: receive slide_state
   useEffect(() => {
     if (!room) return;
 
@@ -543,6 +585,7 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
         const msg = obj as SlideStateMsg;
         if (!msg.lessonId || typeof msg.page !== "number") return;
 
+        // Students follow; tutor can ignore incoming
         if (meIsTutor) return;
 
         setFollowLessonId(msg.lessonId);
@@ -558,30 +601,28 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
     };
   }, [room, meIsTutor]);
 
-  // ✅ Whenever effective lesson changes, refetch signed url and clear error.
+  // When effective lesson changes (tutor selected OR student follows), fetch signed URL on this client
   useEffect(() => {
+    let cancelled = false;
+
     if (!effectiveLessonId) {
       setSlideUrl("");
       setSlideErr("");
       return;
     }
 
-    let cancelled = false;
-
     (async () => {
-      setSlideErr("");
-      setSlideUrl("");
-
-      const { url, error } = await fetchSignedUrl(effectiveLessonId);
+      const { url, err } = await fetchSignedUrl(effectiveLessonId);
       if (cancelled) return;
 
-      if (!url) {
-        setSlideErr(error || "Slide load error");
+      if (err) {
         setSlideUrl("");
+        setSlideErr(err);
         return;
       }
 
       setSlideUrl(url);
+      setSlideErr("");
     })();
 
     return () => {
@@ -590,6 +631,7 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveLessonId]);
 
+  // Tutor: broadcast current state (lessonId + page) so all students sync
   const broadcastState = async (nextLessonId: string, nextPage: number) => {
     if (!room) return;
     const payload: SlideStateMsg = {
@@ -606,21 +648,37 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
     }
   };
 
+  // Tutor: start presenting -> push state so students instantly sync (they will fetch signedUrl themselves)
   const startPresenting = async () => {
     if (!meIsTutor) return;
     const lessonId = selectedLessonId;
     if (!lessonId) return;
 
+    // ✅ Ensure tutor itself also resolves slideUrl correctly before broadcasting
+    // (prevents: student sees, tutor blank due to race)
+    const { url, err } = await fetchSignedUrl(lessonId);
+    if (err || !url) {
+      setSlideUrl("");
+      setSlideErr(err || "Slide not found");
+      setPresenting(true); // still allow "Presenting" state, but show error
+      return;
+    }
+
+    setSlideUrl(url);
+    setSlideErr("");
     setPresenting(true);
+
     const safePage = Math.max(1, page);
     setPage(safePage);
     await broadcastState(lessonId, safePage);
   };
 
   const stopPresenting = async () => {
+    // MVP: keep last state; stopping just disables tutor controls
     setPresenting(false);
   };
 
+  // Tutor: when changing lesson/page while presenting, broadcast
   useEffect(() => {
     if (!meIsTutor) return;
     if (!presenting) return;
@@ -648,6 +706,7 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
           <LeaveButton to="/app" />
           <LocalControls />
 
+          {/* Slide controls */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>Slide</div>
 
@@ -658,6 +717,7 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
                 const v = e.target.value;
                 setSelectedLessonId(v);
                 setPage(1);
+                // If presenting, broadcast will happen via effect
               }}
               style={{
                 fontFamily: UI_FONT,
@@ -806,7 +866,7 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.65 }}>
-          Room: <span style={{ opacity: 0.9 }}>{room.name}</span>
+          Room: <span style={{ opacity: 0.9 }}>{room?.name}</span>
         </div>
       </div>
 
@@ -823,7 +883,7 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
       >
         {hasSlide ? (
           <iframe
-            key={`${effectiveLessonId}-${slideUrl}`}
+            key={`${effectiveLessonId}-${slideUrl}`} // reload when lesson changes
             src={effectiveSlideSrc}
             title="Slide"
             style={{
@@ -866,17 +926,17 @@ function Board({ classId, tutorId }: { classId: string; tutorId?: string }) {
               {slideErr ? (
                 <div
                   style={{
-                    marginTop: 14,
+                    marginTop: 12,
                     padding: "10px 12px",
                     borderRadius: 12,
-                    border: "1px solid rgba(255,120,120,0.25)",
-                    background: "rgba(120,0,0,0.22)",
+                    border: "1px solid rgba(255,90,90,0.35)",
+                    background: "rgba(255,90,90,0.10)",
                     color: "rgba(255,220,220,0.95)",
                     fontSize: 12,
                     textAlign: "left",
                   }}
                 >
-                  <div style={{ fontWeight: 900, marginBottom: 4 }}>Slide load error</div>
+                  <div style={{ fontWeight: 900, marginBottom: 6 }}>Slide load error</div>
                   <div style={{ opacity: 0.95 }}>{slideErr}</div>
                 </div>
               ) : null}
@@ -900,6 +960,7 @@ function useSimpleChat(room: Room | undefined) {
         const decoded = new TextDecoder().decode(payload);
         const obj = JSON.parse(decoded) as any;
 
+        // Ignore slide state messages here (they are handled in Board)
         if (obj?.type === "slide_state") return;
 
         const msg = obj as { t: string; ts: number };
@@ -940,10 +1001,11 @@ function useSimpleChat(room: Room | undefined) {
   return { messages, text, setText, send };
 }
 
-function RightColumn({ tutorId }: { tutorId?: string }) {
+function RightColumn({ meIsTutor }: { meIsTutor: boolean }) {
   const room = useRoomContext();
   const { messages, text, setText, send } = useSimpleChat(room);
 
+  // Stable camera publications (includes local + remote)
   const camTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: false }], {
     onlySubscribed: false,
   });
@@ -952,13 +1014,13 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
 
   const top3 = useMemo(() => {
     const sorted = [...all].sort((a, b) => {
-      const aIsTutor = isTutor(a, tutorId);
-      const bIsTutor = isTutor(b, tutorId);
+      const aIsTutor = isTutorByRole(a);
+      const bIsTutor = isTutorByRole(b);
       if (aIsTutor === bIsTutor) return 0;
       return aIsTutor ? -1 : 1;
     });
     return sorted.slice(0, 3);
-  }, [all, tutorId]);
+  }, [all]);
 
   const tiles: Array<Participant | null> = [...top3];
   while (tiles.length < 3) tiles.push(null);
@@ -993,7 +1055,7 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
             p ? (
               <div key={p.identity} style={{ height: 110, position: "relative" }}>
                 <CameraTileByPub participant={p} publication={pubByIdentity.get(p.identity)} />
-                <TileFooter participant={p} tutorId={tutorId} />
+                <TileFooter participant={p} meIsTutorOverride={meIsTutor} />
               </div>
             ) : (
               <div
@@ -1086,7 +1148,13 @@ function RightColumn({ tutorId }: { tutorId?: string }) {
   );
 }
 
-function MinimalClassroomUI({ classId, tutorId }: { classId: string; tutorId?: string }) {
+function MinimalClassroomUI({
+  classId,
+  meIsTutor,
+}: {
+  classId: string;
+  meIsTutor: boolean;
+}) {
   return (
     <div
       style={{
@@ -1102,7 +1170,7 @@ function MinimalClassroomUI({ classId, tutorId }: { classId: string; tutorId?: s
       }}
     >
       <div style={{ padding: 12, minWidth: 0, minHeight: 0 }}>
-        <Board classId={classId} tutorId={tutorId} />
+        <Board classId={classId} meIsTutor={meIsTutor} />
       </div>
 
       <div
@@ -1113,7 +1181,7 @@ function MinimalClassroomUI({ classId, tutorId }: { classId: string; tutorId?: s
           overflow: "hidden",
         }}
       >
-        <RightColumn tutorId={tutorId} />
+        <RightColumn meIsTutor={meIsTutor} />
       </div>
     </div>
   );
@@ -1126,6 +1194,7 @@ export default function ClassroomClient({ classId }: Props) {
   const [err, setErr] = useState<string>("");
   const [info, setInfo] = useState<TokenInfo | null>(null);
 
+  // IMPORTANT: all hooks must be BEFORE any return (avoid hook-order bug)
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -1154,13 +1223,26 @@ export default function ClassroomClient({ classId }: Props) {
         return;
       }
 
+      // ✅ DO NOT depend on LiveKit metadata timing for local privileges.
+      // Use server truth: class.tutor_id + profile.role (if you later add it on API).
+      const identity = String(json.identity || "");
+      const tutorId = String(json.tutorId || "");
+      const role = json.role ? String(json.role) : null;
+
+      const meIsTutor =
+        (identity && tutorId && identity === tutorId) ||
+        role === "tutor" ||
+        role === "admin";
+
       setInfo({
         roomName: json.roomName,
         token: json.token,
-        tutorId: json.tutorId,
-        identity: json.identity,
-        role: json.role,
+        tutorId,
+        identity,
+        role,
+        meIsTutor,
       });
+
       setLoading(false);
     })();
   }, [classId, router]);
@@ -1189,7 +1271,7 @@ export default function ClassroomClient({ classId }: Props) {
     >
       <RoomAudioRenderer />
       <AutoDisconnectOnUnload />
-      <MinimalClassroomUI classId={classId} tutorId={info?.tutorId} />
+      <MinimalClassroomUI classId={classId} meIsTutor={!!info?.meIsTutor} />
     </LiveKitRoom>
   );
 }
