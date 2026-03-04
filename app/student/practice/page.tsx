@@ -4,7 +4,7 @@
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import { PRACTICE_BANK } from "@/lib/practice/bank";
+import { PRACTICE_BANK, THEORY_BANK } from "@/lib/practice/bank";
 import type { PracticeLessonBank } from "@/lib/practice/types";
 
 type LessonRow = {
@@ -62,6 +62,30 @@ function buildAttemptBank(original: PracticeLessonBank): PracticeLessonBank {
 }
 
 /**
+ * Merge multiple lesson banks (e.g., PRACTICE + THEORY) into one bank for rendering.
+ * - Keeps sections order: banks[] order, then their sections.
+ * - Ensures section ids won't collide by prefixing.
+ * - Assumes question ids are unique across banks (recommended).
+ */
+function mergeLessonBanks(lessonId: string, banks: Array<{ key: string; bank: PracticeLessonBank | null }>): PracticeLessonBank | null {
+  const parts = banks.filter((x) => x.bank && x.bank.sections?.length);
+  if (!parts.length) return null;
+
+  const mergedSections = parts.flatMap((p) =>
+    (p.bank as PracticeLessonBank).sections.map((sec) => ({
+      ...sec,
+      id: `${p.key}:${sec.id}`, // avoid section id collision
+      // keep questions unchanged (id should be unique globally)
+    }))
+  );
+
+  return {
+    lessonId,
+    sections: mergedSections,
+  };
+}
+
+/**
  * ✅ Next.js build (Vercel prerender) requires useSearchParams() to be used
  * inside a component wrapped by <Suspense />.
  */
@@ -96,6 +120,9 @@ function PracticeInner() {
   const [savedAttempt, setSavedAttempt] = useState<SavedAttempt | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+
+  // ✅ Submit guard message (when incomplete)
+  const [guardMsg, setGuardMsg] = useState<string>("");
 
   // ✅ Force light theme (override any dark wrapper)
   const pageStyle: React.CSSProperties = {
@@ -182,24 +209,33 @@ function PracticeInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLessonId]);
 
-  // Bank gốc cho lesson hiện tại
-  const bank: PracticeLessonBank | null = useMemo(() => {
+  // Bank gốc cho lesson hiện tại (merge PRACTICE + THEORY)
+  const mergedBank: PracticeLessonBank | null = useMemo(() => {
     if (!selectedLessonId) return null;
-    return PRACTICE_BANK[selectedLessonId] ?? null;
+
+    const practice = PRACTICE_BANK[selectedLessonId] ?? null;
+    const theory = THEORY_BANK[selectedLessonId] ?? null;
+
+    return mergeLessonBanks(selectedLessonId, [
+      { key: "practice", bank: practice },
+      { key: "theory", bank: theory },
+    ]);
   }, [selectedLessonId]);
 
-  // Khi bank đổi (lesson đổi) -> tạo attemptBank mới (shuffle choices) + reset attempt
+  // Khi mergedBank đổi -> tạo attemptBank mới (shuffle choices) + reset attempt
   useEffect(() => {
-    if (!bank) {
+    setGuardMsg("");
+    setSaveMsg("");
+    setSubmitted(false);
+    setAnswers({});
+
+    if (!mergedBank) {
       setAttemptBank(null);
-      setAnswers({});
-      setSubmitted(false);
       return;
     }
-    setAttemptBank(buildAttemptBank(bank));
-    setAnswers({});
-    setSubmitted(false);
-  }, [bank]);
+
+    setAttemptBank(buildAttemptBank(mergedBank));
+  }, [mergedBank]);
 
   // ✅ Load locked score from DB for this lesson (if exists)
   useEffect(() => {
@@ -217,7 +253,6 @@ function PracticeInner() {
         .maybeSingle();
 
       if (error) {
-        // Don't break page; just show a small message if needed
         console.error(error);
         return;
       }
@@ -233,14 +268,14 @@ function PracticeInner() {
     })();
   }, [userId, selectedLessonId]);
 
-  // ✅ Fix duplicate "Lesson 1: Lesson 1: ..."
+  // Title
   const lessonTitle = useMemo(() => {
     const row = lessons.find((l) => l.id === selectedLessonId);
     if (!row) return "";
     return row.title;
   }, [lessons, selectedLessonId]);
 
-  // ✅ Must be above early returns
+  // Must be above early returns
   const selectedLessonLabel = useMemo(() => {
     const row = lessons.find((l) => l.id === selectedLessonId);
     if (!row) return "Chọn lesson…";
@@ -251,6 +286,30 @@ function PracticeInner() {
     if (!attemptBank) return 0;
     return attemptBank.sections.reduce((sum, s) => sum + s.questions.length, 0);
   }, [attemptBank]);
+
+  const answeredCount = useMemo(() => {
+    if (!attemptBank) return 0;
+    let done = 0;
+    for (const sec of attemptBank.sections) {
+      for (const q of sec.questions) {
+        const chosen = answers[q.id];
+        if (typeof chosen === "number") done += 1;
+      }
+    }
+    return done;
+  }, [attemptBank, answers]);
+
+  const remainingCount = useMemo(() => {
+    return Math.max(0, totalQuestions - answeredCount);
+  }, [totalQuestions, answeredCount]);
+
+  const canSubmit = useMemo(() => {
+    if (!attemptBank) return false;
+    if (totalQuestions <= 0) return false;
+    if (saving) return false;
+    // ✅ guard: must answer all before submit
+    return answeredCount >= totalQuestions;
+  }, [attemptBank, totalQuestions, saving, answeredCount]);
 
   const scoreVM = useMemo(() => {
     if (!attemptBank) return { correct: 0, total: 0, pct: 0 };
@@ -270,7 +329,7 @@ function PracticeInner() {
     return { correct, total, pct };
   }, [attemptBank, answers]);
 
-  // ✅ What to display as "năng lực đã chốt"
+  // What to display as "năng lực đã chốt"
   const lockedScore = useMemo(() => {
     if (savedAttempt) {
       return {
@@ -292,25 +351,36 @@ function PracticeInner() {
   }, [savedAttempt, submitted, scoreVM.correct, scoreVM.total, scoreVM.pct]);
 
   function resetAttempt() {
+    setGuardMsg("");
+    setSaveMsg("");
     setAnswers({});
     setSubmitted(false);
-    setSaveMsg("");
-    if (bank) setAttemptBank(buildAttemptBank(bank)); // shuffle choices again
+    if (mergedBank) setAttemptBank(buildAttemptBank(mergedBank)); // shuffle choices again
   }
 
   function onChoose(questionId: string, idx: number) {
+    setGuardMsg("");
     setAnswers((prev) => ({ ...prev, [questionId]: clamp(idx, 0, 3) }));
     if (submitted) setSubmitted(false);
   }
 
   async function handleSubmit() {
+    setGuardMsg("");
+    setSaveMsg("");
+
     if (!attemptBank || !userId || !selectedLessonId) {
       setSubmitted(true);
       return;
     }
 
+    // ✅ GUARD: must complete all questions
+    if (answeredCount < totalQuestions) {
+      setSubmitted(false);
+      setGuardMsg(`Bạn mới làm được ${answeredCount}/${totalQuestions} câu. Hãy hoàn thành hết trước khi ấn Submit nhé.`);
+      return;
+    }
+
     setSubmitted(true);
-    setSaveMsg("");
 
     // If already locked in DB, do not change anything
     if (savedAttempt) {
@@ -336,8 +406,6 @@ function PracticeInner() {
         .single();
 
       if (error) {
-        // If unique constraint hit (already exists), fetch it and lock
-        // Postgres unique violation: 23505
         const anyErr: any = error as any;
         if (anyErr?.code === "23505") {
           const { data: existing, error: fetchErr } = await supabase
@@ -403,6 +471,22 @@ function PracticeInner() {
     );
   }
 
+  // Sticky summary style
+  const stickyBox: React.CSSProperties = {
+    position: "sticky",
+    top: 12,
+    alignSelf: "start",
+    borderRadius: 14,
+    border: `1px solid var(--border)`,
+    background: "var(--bg-elev)",
+    boxShadow: "var(--shadow)",
+    padding: 12,
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    minHeight: 180,
+  };
+
   return (
     <div style={pageStyle}>
       {/* Header */}
@@ -444,8 +528,9 @@ function PracticeInner() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "380px 1fr",
+          gridTemplateColumns: "380px 1fr 280px",
           gap: 12,
+          alignItems: "start",
         }}
         className="practiceGrid"
       >
@@ -568,13 +653,31 @@ function PracticeInner() {
               </div>
             ) : (
               <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-                Làm xong kéo xuống cuối trang bên phải để <b>Nộp bài</b>.
+                Làm xong rồi bấm <b>Nộp bài</b> để xem đáp án & giải thích.
               </div>
             )}
 
             {saveMsg ? (
               <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
                 {saveMsg}
+              </div>
+            ) : null}
+
+            {guardMsg ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  borderRadius: 12,
+                  border: "1px solid rgba(220,38,38,0.25)",
+                  background: "rgba(220,38,38,0.06)",
+                  padding: 10,
+                  fontSize: 12,
+                  color: "var(--text-primary)",
+                  lineHeight: 1.6,
+                  fontWeight: 800,
+                }}
+              >
+                {guardMsg}
               </div>
             ) : null}
           </div>
@@ -584,7 +687,7 @@ function PracticeInner() {
           </div>
         </div>
 
-        {/* Right: Practice frame */}
+        {/* Middle: Practice frame */}
         <div
           style={{
             borderRadius: 14,
@@ -718,7 +821,7 @@ function PracticeInner() {
                 </div>
               ))}
 
-              {/* Bottom actions (Submit/Reset moved here) */}
+              {/* Bottom actions */}
               <div
                 style={{
                   borderRadius: 14,
@@ -744,7 +847,8 @@ function PracticeInner() {
                     </>
                   ) : (
                     <>
-                      Chọn đáp án cho từng câu, rồi bấm <b>Nộp bài</b> để xem đáp án & giải thích.
+                      Đã làm: <b>{answeredCount}</b> / {totalQuestions} câu{" "}
+                      {remainingCount > 0 ? <span>• còn thiếu <b>{remainingCount}</b> câu</span> : null}
                     </>
                   )}
                 </div>
@@ -784,19 +888,93 @@ function PracticeInner() {
                 </div>
               </div>
 
+              {guardMsg ? (
+                <div
+                  style={{
+                    borderRadius: 12,
+                    border: "1px solid rgba(220,38,38,0.25)",
+                    background: "rgba(220,38,38,0.06)",
+                    padding: 10,
+                    fontSize: 12,
+                    color: "var(--text-primary)",
+                    lineHeight: 1.6,
+                    fontWeight: 800,
+                  }}
+                >
+                  {guardMsg}
+                </div>
+              ) : null}
+
               {saveMsg ? (
                 <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>{saveMsg}</div>
               ) : null}
             </div>
           )}
         </div>
+
+        {/* Right: Sticky progress panel */}
+        <div style={stickyBox} className="stickyPanel">
+          <div style={{ fontWeight: 950 }}>Tiến độ làm bài</div>
+
+          <div
+            style={{
+              borderRadius: 12,
+              border: `1px solid var(--border)`,
+              background: "var(--bg-soft)",
+              padding: 10,
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              fontSize: 12,
+              color: "var(--text-primary)",
+              lineHeight: 1.6,
+            }}
+          >
+            <div>
+              Đã làm: <b>{answeredCount}</b> / {totalQuestions} câu
+            </div>
+            <div>
+              Còn thiếu: <b>{remainingCount}</b> câu
+            </div>
+          </div>
+
+          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+            {remainingCount > 0
+              ? "Bạn cần làm đủ tất cả câu thì mới Submit được."
+              : "OK rồi — bạn có thể Submit để xem đáp án & chốt điểm (lần đầu)."}
+          </div>
+
+          {guardMsg ? (
+            <div
+              style={{
+                borderRadius: 12,
+                border: "1px solid rgba(220,38,38,0.25)",
+                background: "rgba(220,38,38,0.06)",
+                padding: 10,
+                fontSize: 12,
+                fontWeight: 800,
+                lineHeight: 1.6,
+              }}
+            >
+              {guardMsg}
+            </div>
+          ) : null}
+
+          <div style={{ marginTop: "auto", fontSize: 11, color: "var(--text-faint)" }}>
+            Tip: Reset sẽ xáo lại vị trí đáp án để tránh học “vị trí A/B/C/D”.
+          </div>
+        </div>
       </div>
 
       {/* Responsive */}
       <style jsx>{`
-        @media (max-width: 900px) {
+        @media (max-width: 1100px) {
           .practiceGrid {
             grid-template-columns: 1fr !important;
+          }
+          .stickyPanel {
+            position: relative !important;
+            top: auto !important;
           }
         }
       `}</style>

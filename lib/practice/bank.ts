@@ -69,7 +69,12 @@ export const PRACTICE_BANK: PracticeBank = {
           {
             id: "ex1-q7b",
             prompt: "7) ... but I (not think) ________ he'll pass.",
-            choices: [{ text: "don’t think" }, { text: "am not think" }, { text: "doesn’t think" }, { text: "didn’t think" }],
+            choices: [
+              { text: "don’t think" },
+              { text: "am not think" },
+              { text: "doesn’t think" },
+              { text: "didn’t think" },
+            ],
             answerIndex: 0,
             explainVi:
               "Phủ định hiện tại đơn với động từ thường: I/You/We/They → do not + V nguyên mẫu. 'I' → don’t think.",
@@ -109,7 +114,12 @@ export const PRACTICE_BANK: PracticeBank = {
           {
             id: "ex1-q11",
             prompt: "11) You (speak) ________ English?",
-            choices: [{ text: "Are you speak" }, { text: "Do you speak" }, { text: "Does you speak" }, { text: "Did you speak" }],
+            choices: [
+              { text: "Are you speak" },
+              { text: "Do you speak" },
+              { text: "Does you speak" },
+              { text: "Did you speak" },
+            ],
             answerIndex: 1,
             explainVi:
               "Câu hỏi với động từ thường (hiện tại đơn): Do/Does + S + V nguyên mẫu. 'You' → Do you speak?",
@@ -151,72 +161,63 @@ export const PRACTICE_BANK: PracticeBank = {
             prompt: "3) They _________ ready to get a pet.",
             choices: [{ text: "is" }, { text: "am" }, { text: "are" }, { text: "be" }],
             answerIndex: 2,
-            explainVi:
-              "'They' là số nhiều → dùng 'are' (I am / You are / We/They are).",
+            explainVi: "'They' là số nhiều → dùng 'are' (I am / You are / We/They are).",
           },
           {
             id: "ex2-q4",
             prompt: "4) My life _____ so boring.",
             choices: [{ text: "are" }, { text: "am" }, { text: "is" }, { text: "be" }],
             answerIndex: 2,
-            explainVi:
-              "'My life' số ít → dùng 'is' (He/She/It is).",
+            explainVi: "'My life' số ít → dùng 'is' (He/She/It is).",
           },
           {
             id: "ex2-q5a",
             prompt: "5) Her husband ________ from China.",
             choices: [{ text: "are" }, { text: "is" }, { text: "am" }, { text: "be" }],
             answerIndex: 1,
-            explainVi:
-              "'Her husband' số ít → dùng 'is'.",
+            explainVi: "'Her husband' số ít → dùng 'is'.",
           },
           {
             id: "ex2-q5b",
             prompt: "5) She _______ from Viet Nam.",
             choices: [{ text: "are" }, { text: "is" }, { text: "am" }, { text: "be" }],
             answerIndex: 1,
-            explainVi:
-              "'She' → dùng 'is' (I am / You are / She is).",
+            explainVi: "'She' → dùng 'is' (I am / You are / She is).",
           },
           {
             id: "ex2-q6",
             prompt: "6) They ____________ (not/be) late.",
             choices: [{ text: "isn’t" }, { text: "aren’t" }, { text: "don’t be" }, { text: "doesn’t be" }],
             answerIndex: 1,
-            explainVi:
-              "Phủ định với 'to be': thêm 'not' sau be. They are not → aren’t.",
+            explainVi: "Phủ định với 'to be': thêm 'not' sau be. They are not → aren’t.",
           },
           {
             id: "ex2-q7",
             prompt: "7) I and my sister (be)________ good friends.",
             choices: [{ text: "is" }, { text: "am" }, { text: "are" }, { text: "be" }],
             answerIndex: 2,
-            explainVi:
-              "“I and my sister” = 2 người → chủ ngữ số nhiều → dùng 'are'.",
+            explainVi: "“I and my sister” = 2 người → chủ ngữ số nhiều → dùng 'are'.",
           },
           {
             id: "ex2-q8",
             prompt: "8) ___________ (she/be) a doctor?",
             choices: [{ text: "Are she" }, { text: "Is she" }, { text: "Does she is" }, { text: "She is" }],
             answerIndex: 1,
-            explainVi:
-              "Câu hỏi với 'to be': đưa be lên đầu câu. She → Is she a doctor?",
+            explainVi: "Câu hỏi với 'to be': đưa be lên đầu câu. She → Is she a doctor?",
           },
           {
             id: "ex2-q9",
             prompt: "9) Her sister (be) _________ 9 years old.",
             choices: [{ text: "are" }, { text: "am" }, { text: "is" }, { text: "be" }],
             answerIndex: 2,
-            explainVi:
-              "'Her sister' số ít → dùng 'is'.",
+            explainVi: "'Her sister' số ít → dùng 'is'.",
           },
           {
             id: "ex2-q10",
             prompt: "10) Max and Lan (be)__________ my cats.",
             choices: [{ text: "is" }, { text: "am" }, { text: "are" }, { text: "be" }],
             answerIndex: 2,
-            explainVi:
-              "“Max and Lan” = 2 người → số nhiều → dùng 'are'.",
+            explainVi: "“Max and Lan” = 2 người → số nhiều → dùng 'are'.",
           },
         ],
       },
@@ -231,16 +232,14 @@ export const PRACTICE_BANK: PracticeBank = {
             prompt: "1) Myan _____________ handball very well.",
             choices: [{ text: "drinks" }, { text: "plays" }, { text: "closes" }, { text: "lives" }],
             answerIndex: 1,
-            explainVi:
-              "Cụm đúng: play + môn thể thao (play handball). Các đáp án khác không hợp nghĩa/collocation.",
+            explainVi: "Cụm đúng: play + môn thể thao (play handball). Các đáp án khác không hợp nghĩa/collocation.",
           },
           {
             id: "ex3-q2",
             prompt: "2) They never _____________ tea.",
             choices: [{ text: "do" }, { text: "take" }, { text: "drink" }, { text: "speak" }],
             answerIndex: 2,
-            explainVi:
-              "Cụm đúng: drink tea = uống trà. 'never' chỉ thói quen → dùng hiện tại đơn.",
+            explainVi: "Cụm đúng: drink tea = uống trà. 'never' chỉ thói quen → dùng hiện tại đơn.",
           },
           {
             id: "ex3-q3",
@@ -271,40 +270,35 @@ export const PRACTICE_BANK: PracticeBank = {
             prompt: "6) Her parents _____________ in a very small flat.",
             choices: [{ text: "do" }, { text: "speak" }, { text: "live" }, { text: "drink" }],
             answerIndex: 2,
-            explainVi:
-              "'Her parents' số nhiều → dùng V nguyên mẫu (không thêm -s/-es). Động từ đúng theo nghĩa: live.",
+            explainVi: "'Her parents' số nhiều → dùng V nguyên mẫu (không thêm -s/-es). Động từ đúng theo nghĩa: live.",
           },
           {
             id: "ex3-q7",
             prompt: "7) The Olympic Games _____________ place every four years.",
             choices: [{ text: "do" }, { text: "take" }, { text: "play" }, { text: "open" }],
             answerIndex: 1,
-            explainVi:
-              "Cụm cố định: take place = diễn ra. 'do/play/open place' sai collocation.",
+            explainVi: "Cụm cố định: take place = diễn ra. 'do/play/open place' sai collocation.",
           },
           {
             id: "ex3-q8",
             prompt: "8) They always _____________ their homework.",
             choices: [{ text: "take" }, { text: "play" }, { text: "do" }, { text: "drink" }],
             answerIndex: 2,
-            explainVi:
-              "Cụm đúng: do homework. 'always' chỉ thói quen → hiện tại đơn.",
+            explainVi: "Cụm đúng: do homework. 'always' chỉ thói quen → hiện tại đơn.",
           },
           {
             id: "ex3-q9",
             prompt: "9) The students _____________ a little English.",
             choices: [{ text: "do" }, { text: "drink" }, { text: "speak" }, { text: "open" }],
             answerIndex: 2,
-            explainVi:
-              "Cụm đúng: speak English = nói tiếng Anh. Chủ ngữ số nhiều → V nguyên mẫu.",
+            explainVi: "Cụm đúng: speak English = nói tiếng Anh. Chủ ngữ số nhiều → V nguyên mẫu.",
           },
           {
             id: "ex3-q10",
             prompt: "10) I always _____________ late in the morning.",
             choices: [{ text: "take" }, { text: "wake up" }, { text: "open" }, { text: "cause" }],
             answerIndex: 1,
-            explainVi:
-              "Cụm đúng: wake up = thức dậy. 'always' chỉ thói quen → hiện tại đơn.",
+            explainVi: "Cụm đúng: wake up = thức dậy. 'always' chỉ thói quen → hiện tại đơn.",
           },
         ],
       },
@@ -359,8 +353,7 @@ export const PRACTICE_BANK: PracticeBank = {
             prompt: "6) San and David always ________ a movie on Saturdays.",
             choices: [{ text: "see" }, { text: "sees" }, { text: "do see" }, { text: "does" }],
             answerIndex: 0,
-            explainVi:
-              "San and David = số nhiều → dùng V nguyên mẫu (không thêm -s/-es). Vì vậy chọn see.",
+            explainVi: "San and David = số nhiều → dùng V nguyên mẫu (không thêm -s/-es). Vì vậy chọn see.",
           },
           {
             id: "ex4-q7",
@@ -375,8 +368,7 @@ export const PRACTICE_BANK: PracticeBank = {
             prompt: "8) They ________ student in class 8A.",
             choices: [{ text: "are" }, { text: "is" }, { text: "do" }, { text: "eat" }],
             answerIndex: 0,
-            explainVi:
-              "To be hiện tại: I am / You are / We/They are. 'They' → are.",
+            explainVi: "To be hiện tại: I am / You are / We/They are. 'They' → are.",
           },
           {
             id: "ex4-q9",
@@ -399,3 +391,11 @@ export const PRACTICE_BANK: PracticeBank = {
     ],
   },
 };
+
+/**
+ * THEORY BANK (optional)
+ * - Same schema as PRACTICE_BANK
+ * - Keep it empty for now; later you can add theory questions per lessonId
+ * - Practice page will automatically merge PRACTICE_BANK + THEORY_BANK.
+ */
+export const THEORY_BANK: PracticeBank = {};
