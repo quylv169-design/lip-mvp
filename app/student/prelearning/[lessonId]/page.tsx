@@ -1,3 +1,4 @@
+// app/student/prelearning/[lessonId]/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -149,11 +150,53 @@ function getFileExt(file: File) {
 }
 
 async function sha256Hex(file: File): Promise<string> {
-  // optional, but useful
   const buf = await file.arrayBuffer();
   const hashBuf = await crypto.subtle.digest("SHA-256", buf);
   const hashArr = Array.from(new Uint8Array(hashBuf));
   return hashArr.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function normalizeTitle(s: string) {
+  return (s ?? "")
+    .toLowerCase()
+    .replace(/lesson\s*\d+\s*[:\-–—]?\s*/g, "") // remove "lesson 1:" prefix variants
+    .replace(/[^\p{L}\p{N}]+/gu, " ") // keep letters/numbers
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findTruthForLesson(lesson: LessonRow | null) {
+  if (!lesson) return null;
+
+  // 1) direct by UUID (works for template class)
+  const direct = (TRUTH_GROUND as any)?.[lesson.id];
+  if (direct) return direct;
+
+  // 2) fallback by title (works for cloned lessons because title stays the same)
+  const targetNorm = normalizeTitle(lesson.title);
+  if (!targetNorm) return null;
+
+  const values = Object.values(TRUTH_GROUND as any) as any[];
+  for (const t of values) {
+    const titleCandidate =
+      (typeof t?.lessonTitle === "string" && t.lessonTitle) ||
+      (typeof t?.title === "string" && t.title) ||
+      "";
+    const norm = normalizeTitle(titleCandidate);
+    if (norm && norm === targetNorm) return t;
+  }
+
+  // 3) fallback by order_index if a truth item has it (optional)
+  for (const t of values) {
+    const oi =
+      (typeof t?.order_index === "number" && t.order_index) ||
+      (typeof t?.lesson_order_index === "number" && t.lesson_order_index) ||
+      (typeof t?.lessonOrderIndex === "number" && t.lessonOrderIndex) ||
+      null;
+    if (oi !== null && oi === lesson.order_index) return t;
+  }
+
+  return null;
 }
 
 export default function PrelearningWizardPage() {
@@ -198,6 +241,9 @@ export default function PrelearningWizardPage() {
   // ✅ seed cho attempt hiện tại
   const [seed, setSeed] = useState<string>(() => makeSeed());
 
+  // ✅ file input ref (custom button to avoid "missing Choose file" issue)
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     (async () => {
       const { data: sess } = await supabase.auth.getSession();
@@ -223,11 +269,8 @@ export default function PrelearningWizardPage() {
     })();
   }, [lessonId, router]);
 
-  const truth = useMemo(() => {
-    if (!lessonId) return null;
-    const t = (TRUTH_GROUND as any)?.[lessonId];
-    return t ?? null;
-  }, [lessonId]);
+  // ✅ IMPORTANT: truth lookup must work for cloned lessons (lessonId changes)
+  const truth = useMemo(() => findTruthForLesson(lesson), [lesson]);
 
   const checklistText: string = useMemo(() => {
     const raw = (truth as any)?.checklistForStudents;
@@ -346,10 +389,14 @@ export default function PrelearningWizardPage() {
 
     try {
       const fd = new FormData();
-      notebookImages.slice(0, 2).forEach((f) => fd.append("files", f));
 
+      // ✅ allow unlimited images (append all)
+      notebookImages.forEach((f) => fd.append("files", f));
+
+      // ✅ include checklist text so backend can score against it even if it changes later
       fd.append("lessonTitle", lesson.title);
       fd.append("lessonId", lesson.id);
+      fd.append("requiredNotes", checklistText || "");
 
       const res = await fetch("/api/prelearning/evaluate-notebook", { method: "POST", body: fd });
 
@@ -508,7 +555,6 @@ export default function PrelearningWizardPage() {
     }
   }
 
-  // ✅ NEW handleSubmit: upload to storage + submit JSON with Authorization
   async function handleSubmit() {
     if (!lesson) return;
     if (!studentId) return;
@@ -530,8 +576,8 @@ export default function PrelearningWizardPage() {
         return;
       }
 
-      // 1) Upload notebook images (max 2) to Supabase Storage (private bucket)
-      const filesToUpload = notebookImages.slice(0, 2);
+      // ✅ Upload ALL notebook images
+      const filesToUpload = notebookImages;
 
       if (!filesToUpload.length) {
         setSubmitErr("Bạn chưa chọn ảnh vở.");
@@ -543,10 +589,9 @@ export default function PrelearningWizardPage() {
 
       for (const f of filesToUpload) {
         const ext = getFileExt(f);
-        const fileId = makeSeed(); // quick uuid-ish
+        const fileId = makeSeed();
         const path = `${studentId}/${lesson.id}/${seed}/${fileId}.${ext}`;
 
-        // compute hash (optional)
         let hash = "";
         try {
           hash = await sha256Hex(f);
@@ -567,7 +612,6 @@ export default function PrelearningWizardPage() {
         notebook_image_hashes.push(hash);
       }
 
-      // 2) Submit attempt (JSON)
       const payload = {
         lesson_id: lesson.id,
         class_id: lesson.class_id,
@@ -586,6 +630,9 @@ export default function PrelearningWizardPage() {
         pre_quiz_total: quizTotal,
         quiz_answers: quizAnswers,
         questions: cleaned,
+
+        // ✅ persist required notes (so tutor/admin can audit later)
+        required_notes: checklistText || "",
 
         ai_feedback: {
           notebook_feedback: notebookEval.feedback,
@@ -663,7 +710,7 @@ export default function PrelearningWizardPage() {
       ? "Chưa chọn ảnh"
       : notebookImages.length === 1
       ? `${notebookImages[0].name} (${Math.round(notebookImages[0].size / 1024)} KB)`
-      : `${notebookImages[0].name} (+${notebookImages.length - 1})`;
+      : `${notebookImages.length} ảnh (ví dụ: ${notebookImages[0].name})`;
 
   const canGoToQuestions = !!quiz && quizAnswers.length > 0 && !quizAnswers.some((a) => a === -1);
 
@@ -796,13 +843,13 @@ export default function PrelearningWizardPage() {
               <>
                 <div style={{ fontSize: 16, fontWeight: 900 }}>Step 1 — Upload ảnh vở (JPEG/PNG)</div>
                 <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 14, lineHeight: 1.7 }}>
-                  Dùng CamScanner/ScanCam export <b>JPG</b> (không cần PDF). Hệ thống chấm theo 2 tiêu chí:
+                  Dùng CamScanner/ScanCam export <b>JPG/PNG</b> (không cần PDF). Hệ thống chấm theo 2 tiêu chí:
                   <ul style={{ marginTop: 8, paddingLeft: 18 }}>
                     <li>Đủ nội dung trọng tâm theo slide/tutor (0–4)</li>
                     <li>Trình bày, chữ viết nghiêm túc/dễ nhìn (0–2)</li>
                   </ul>
                   <div style={{ marginTop: 8, color: "var(--text-faint)" }}>
-                    MVP: chấm tối đa <b>2 ảnh</b> để nhanh/rẻ. Bạn hãy chọn trang quan trọng nhất.
+                    Bạn có thể upload <b>nhiều ảnh</b> (nhiều trang vở) nếu cần.
                   </div>
                 </div>
 
@@ -836,7 +883,8 @@ export default function PrelearningWizardPage() {
                         </pre>
                       ) : (
                         <div style={{ color: "var(--text-muted)", fontSize: 14, lineHeight: 1.7 }}>
-                          ⚠️ Chưa có nội dung bắt buộc cho lesson này.
+                          ⚠️ Chưa có nội dung bắt buộc cho lesson này. (Nếu lesson là bản clone, hệ thống sẽ match theo title;
+                          bạn kiểm tra TRUTH_GROUND có title tương ứng.)
                         </div>
                       )}
                       <div style={{ marginTop: 10, color: "var(--text-faint)", fontSize: 13, lineHeight: 1.7 }}>
@@ -846,21 +894,69 @@ export default function PrelearningWizardPage() {
                   )}
                 </div>
 
-                <div style={{ marginTop: 12 }}>
+                {/* ✅ Custom choose-file button (fix "missing Choose file" + still supports multiple) */}
+                <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                   <input
+                    ref={fileInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/jpeg,image/jpg,image/png,image/webp"
                     multiple
+                    style={{ display: "none" }}
                     onChange={(e) => {
                       const arr = Array.from(e.target.files ?? []);
                       setNotebookImages(arr);
+                      // allow re-select same files again
+                      e.currentTarget.value = "";
                     }}
                   />
+
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{ ...btnGhost }}
+                  >
+                    📎 Chọn ảnh vở
+                  </button>
+
+                  <div style={{ color: "var(--text-muted)", fontSize: 14 }}>
+                    Selected: <b style={{ color: "var(--text-primary)" }}>{selectedLabel}</b>
+                  </div>
+
+                  {notebookImages.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setNotebookImages([])}
+                      style={{ ...btnGhost, height: 36 }}
+                      title="Bỏ chọn tất cả"
+                    >
+                      ✖ Clear
+                    </button>
+                  ) : null}
                 </div>
 
-                <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 14 }}>
-                  Selected: <b style={{ color: "var(--text-primary)" }}>{selectedLabel}</b>
-                </div>
+                {notebookImages.length > 1 ? (
+                  <div style={{ marginTop: 10, ...cardSoft }}>
+                    <div style={{ fontWeight: 900, marginBottom: 6 }}>Danh sách ảnh đã chọn</div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {notebookImages.slice(0, 30).map((f, idx) => (
+                        <div
+                          key={`${f.name}-${f.size}-${idx}`}
+                          style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13 }}
+                        >
+                          <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {idx + 1}. {f.name}
+                          </div>
+                          <div style={{ opacity: 0.75 }}>{Math.round(f.size / 1024)} KB</div>
+                        </div>
+                      ))}
+                      {notebookImages.length > 30 ? (
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>
+                          (Đang hiển thị 30/{notebookImages.length}.)
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
 
                 {notebookErr && (
                   <pre style={{ marginTop: 10, color: "var(--danger)", whiteSpace: "pre-wrap" }}>{notebookErr}</pre>
@@ -899,7 +995,6 @@ export default function PrelearningWizardPage() {
                     <button
                       type="button"
                       onClick={() => {
-                        // hard retry: clear then generate once
                         setQuiz(null);
                         setQuizAnswers([]);
                         setQuizErr("");
@@ -1100,7 +1195,15 @@ export default function PrelearningWizardPage() {
                   {notebookEval?.feedback?.length ? (
                     <div style={{ marginTop: 12 }}>
                       <div style={{ fontWeight: 950, marginBottom: 8, fontSize: 15 }}>Notebook feedback</div>
-                      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 15, lineHeight: 1.85, color: "var(--text-muted)" }}>
+                      <ul
+                        style={{
+                          margin: 0,
+                          paddingLeft: 18,
+                          fontSize: 15,
+                          lineHeight: 1.85,
+                          color: "var(--text-muted)",
+                        }}
+                      >
                         {notebookEval.feedback.slice(0, 7).map((f, i) => (
                           <li key={i}>{f}</li>
                         ))}
@@ -1125,7 +1228,15 @@ export default function PrelearningWizardPage() {
                           <div style={{ marginTop: 10 }}>
                             <div style={{ fontWeight: 950, marginBottom: 6, fontSize: 15 }}>👉 Bạn đang yếu ở:</div>
 
-                            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 15, lineHeight: 1.85, color: "var(--text-muted)" }}>
+                            <ul
+                              style={{
+                                margin: 0,
+                                paddingLeft: 18,
+                                fontSize: 15,
+                                lineHeight: 1.85,
+                                color: "var(--text-muted)",
+                              }}
+                            >
                               {topWeakPoints.map((w, i) => (
                                 <li key={i}>
                                   <b style={{ color: "var(--text-primary)" }}>{w.title}</b>. {w.tip}
@@ -1164,7 +1275,14 @@ export default function PrelearningWizardPage() {
                                           {q.sentence_en}
                                         </div>
 
-                                        <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.75, color: "var(--text-muted)" }}>
+                                        <div
+                                          style={{
+                                            marginTop: 10,
+                                            fontSize: 14,
+                                            lineHeight: 1.75,
+                                            color: "var(--text-muted)",
+                                          }}
+                                        >
                                           <div>
                                             ❌ Bạn chọn:{" "}
                                             <b style={{ color: "var(--text-primary)" }}>
@@ -1194,7 +1312,15 @@ export default function PrelearningWizardPage() {
                   {questionsEval?.feedback?.length || questionsEval?.notes?.length ? (
                     <div style={{ marginTop: 14 }}>
                       <div style={{ fontWeight: 950, marginBottom: 8, fontSize: 15 }}>Questions feedback</div>
-                      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 15, lineHeight: 1.85, color: "var(--text-muted)" }}>
+                      <ul
+                        style={{
+                          margin: 0,
+                          paddingLeft: 18,
+                          fontSize: 15,
+                          lineHeight: 1.85,
+                          color: "var(--text-muted)",
+                        }}
+                      >
                         {(questionsEval.feedback ?? questionsEval.notes ?? []).slice(0, 7).map((f, i) => (
                           <li key={i}>{f}</li>
                         ))}
@@ -1245,7 +1371,9 @@ export default function PrelearningWizardPage() {
                 <li>Trình bày rõ ràng, chữ dễ đọc (0–2)</li>
               </ul>
 
-              <div style={{ fontWeight: 900, marginTop: 12, marginBottom: 6, color: "var(--text-primary)" }}>Quiz (0–2)</div>
+              <div style={{ fontWeight: 900, marginTop: 12, marginBottom: 6, color: "var(--text-primary)" }}>
+                Quiz (0–2)
+              </div>
               <div>Điểm = (đúng/tổng) × 2</div>
 
               <div style={{ fontWeight: 900, marginTop: 12, marginBottom: 6, color: "var(--text-primary)" }}>
