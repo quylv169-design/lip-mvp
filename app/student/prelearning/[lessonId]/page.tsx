@@ -1098,28 +1098,41 @@ export default function PrelearningWizardPage() {
 
                 <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
                   {questions.map((q, idx) => (
-                    <div key={idx} style={{ display: "flex", gap: 10, alignItems: "stretch" }}>
+                    <div
+  key={idx}
+  style={{
+    display: "flex",
+    gap: 10,
+    alignItems: "stretch",
+    background: "var(--bg-soft)",
+    border: "1px solid var(--border)",
+    borderRadius: 12,
+    padding: 12,
+  }}
+>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 6, fontWeight: 900 }}>
                           Câu hỏi {idx + 1}
                         </div>
                         <textarea
-                          value={q}
-                          onChange={(e) => updateQuestionRow(idx, e.target.value)}
-                          placeholder={`Nhập câu hỏi ${idx + 1}...`}
-                          rows={3}
-                          style={{
-                            width: "100%",
-                            borderRadius: 12,
-                            border: "1px solid var(--input-border)",
-                            background: "var(--input-bg)",
-                            color: "var(--text-primary)",
-                            padding: 12,
-                            outline: "none",
-                            fontSize: 14,
-                            lineHeight: 1.7,
-                          }}
-                        />
+  value={q}
+  onChange={(e) => updateQuestionRow(idx, e.target.value)}
+  placeholder={`Ví dụ: "Why do we use 'does' with he/she/it?"`}
+  rows={3}
+  style={{
+    width: "100%",
+    borderRadius: 12,
+    border: "2px solid var(--border)",
+    background: "white",
+    color: "#111",
+    padding: "14px 14px",
+    outline: "none",
+    fontSize: 15,
+    lineHeight: 1.6,
+    resize: "vertical",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+  }}
+/>
                       </div>
 
                       <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
