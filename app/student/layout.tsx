@@ -22,13 +22,25 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
           borderBottom: "1px solid var(--border)",
           background: "var(--bg-elev)",
           boxShadow: "var(--shadow)",
+          position: "sticky",
+          top: 0,
+          zIndex: 20,
         }}
       >
         <div style={{ fontWeight: 900, letterSpacing: 0.2 }}>Student</div>
       </div>
 
-      {/* IMPORTANT: phải render children ở đây */}
-      <div style={{ maxWidth: 1050, margin: "0 auto", padding: 16 }}>{children}</div>
+      {/* ✅ Full-width content container (fix UX bị bóp) */}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 1700, // mở rộng cho màn 1920, vẫn gọn gàng
+          margin: "0 auto",
+          padding: 16,
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
