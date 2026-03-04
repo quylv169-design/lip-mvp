@@ -11,6 +11,12 @@ type NotebookEvalOut = {
   feedback: string[]; // VN bullets, short, actionable
 };
 
+type ModelCheckpoint = {
+  item: string; // short required point (derived from checklist)
+  hit: number; // 0 | 0.5 | 1
+  evidence?: string; // where/what seen in notebook
+};
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -30,6 +36,52 @@ function toStringArray(v: any) {
 
 function safeStr(v: any) {
   return typeof v === "string" ? v.trim() : "";
+}
+
+function normalizeHit(v: any): 0 | 0.5 | 1 {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  if (n >= 0.75) return 1;
+  if (n >= 0.25) return 0.5;
+  return 0;
+}
+
+function normalizeCheckpointArray(v: any): ModelCheckpoint[] {
+  if (!Array.isArray(v)) return [];
+  const out: ModelCheckpoint[] = [];
+  for (const it of v) {
+    const item = safeStr(it?.item);
+    if (!item) continue;
+    out.push({
+      item: item.slice(0, 220),
+      hit: normalizeHit(it?.hit),
+      evidence: safeStr(it?.evidence).slice(0, 280) || undefined,
+    });
+  }
+  return out;
+}
+
+/**
+ * Map coverage_ratio (0..1) -> content_score (0..4)
+ * Threshold-based to prevent "a little bit but high score".
+ */
+function coverageToContentScore4(coverage: number): number {
+  const c = clamp(coverage, 0, 1);
+  if (c < 0.25) return 0;
+  if (c < 0.5) return 1;
+  if (c < 0.75) return 2;
+  if (c < 0.9) return 3;
+  return 4;
+}
+
+/**
+ * Compute coverage from checkpoints (equal weights).
+ * If model returns 0 checkpoints, return null.
+ */
+function computeCoverageFromCheckpoints(checkpoints: ModelCheckpoint[]): number | null {
+  if (!checkpoints.length) return null;
+  const sum = checkpoints.reduce((acc, cp) => acc + normalizeHit(cp.hit), 0);
+  return clamp(sum / checkpoints.length, 0, 1);
 }
 
 /**
@@ -107,15 +159,9 @@ export async function POST(req: Request) {
     const checklistOverride = String(formData.get("checklistForStudents") ?? "").trim();
     const rubricOverride = String(formData.get("scoringRubric") ?? "").trim();
 
-    if (!lessonTitle) {
-      return NextResponse.json({ error: "Missing lessonTitle" }, { status: 400 });
-    }
-    if (!lessonId) {
-      return NextResponse.json({ error: "Missing lessonId" }, { status: 400 });
-    }
-    if (!files || files.length === 0) {
-      return NextResponse.json({ error: "Missing images" }, { status: 400 });
-    }
+    if (!lessonTitle) return NextResponse.json({ error: "Missing lessonTitle" }, { status: 400 });
+    if (!lessonId) return NextResponse.json({ error: "Missing lessonId" }, { status: 400 });
+    if (!files || files.length === 0) return NextResponse.json({ error: "Missing images" }, { status: 400 });
 
     const resolved = resolveTruthGround({
       lessonId,
@@ -139,7 +185,7 @@ Chấm theo 2 tiêu chí:
     const hasChecklist = !!checklistForStudents;
 
     // ✅ Support many images, but cap to avoid oversized requests/cost
-    const MAX_IMAGES = 6;
+    const MAX_IMAGES = 10;
     const pick = files.slice(0, MAX_IMAGES);
 
     const images = await Promise.all(
@@ -150,55 +196,67 @@ Chấm theo 2 tiêu chí:
       })
     );
 
+    /**
+     * ✅ New scoring approach (MVP-strong):
+     * - Model must derive 6–12 "checkpoints" from checklistForStudents (major required points)
+     * - For each checkpoint, mark hit (0/0.5/1) based ONLY on what is visible in notebook photos
+     * - Server computes coverage_ratio = avg(hit)
+     * - Server maps coverage_ratio -> content_score using strict thresholds
+     * - Hard rule: if missing_items is non-empty => cannot be 4/4
+     */
     const prompt = `
 You are grading a student's handwritten notebook for PRE-LEARNING.
 
-IMPORTANT:
+ABSOLUTE RULES:
 - You MUST use the provided "Truth Ground" as the only ground truth for CONTENT.
-- Do NOT grade based on vibe, length, or effort alone.
-- If the writing is unrelated / random / doodles / off-topic => content_score MUST be 0.
+- You MUST grade ONLY based on what is visible in the uploaded notebook images.
+- DO NOT assume "maybe on another page". If you don't see it, it is missing.
+- If the writing is unrelated / random / doodles / off-topic => all checkpoints hit=0.
 - If handwriting is extremely illegible => presentation_score MUST be 0.
 - If checklistForStudents is EMPTY (missing truth ground), you MUST:
-  - set content_score = 0
-  - still grade presentation_score (0–2)
-  - feedback must tell admin/student that checklist is missing for this lesson.
+  - set checkpoints = []
+  - coverage_ratio = 0
+  - missing_items = []
+  - presentation_score still graded (0–2)
+  - feedback must say checklist is missing for this lesson (ask admin to set it).
 
 Lesson: ${lessonTitle}
 LessonId: ${lessonId}
 TruthGroundSource: ${resolved.source}
 
-TRUTH GROUND (must follow):
+TRUTH GROUND:
 --- checklistForStudents ---
 ${checklistForStudents || "(EMPTY)"}
 --- scoringRubric ---
 ${scoringRubric}
 
-SCORING (STRICT):
-A) content_score (0–4)
-- Compare the notebook to checklistForStudents.
-- Missing a required part => subtract points.
-- If only 0–1 minor pieces present => content_score 1 max.
-- If none of the required parts are present => content_score 0.
-- "Wrote a lot" does NOT earn points unless it matches checklist content.
-${hasChecklist ? "" : "- Since checklist is EMPTY, content_score MUST be 0."}
+TASK (STRICT):
+1) From checklistForStudents, create 6–12 SHORT "checkpoints" (major required points).
+   - Each checkpoint should be a short phrase in Vietnamese (max ~12 words).
+   - DO NOT invent checkpoints not present in checklist.
+2) For each checkpoint, decide hit:
+   - 1   = clearly present in notebook images
+   - 0.5 = partially present / unclear / missing example / not complete
+   - 0   = not seen
+   Also add "evidence" (very short) describing what you saw (e.g., "Có dòng 'He/She/It + V(s/es)'").
+3) Compute coverage_ratio = average(hit) across checkpoints (0..1).
+4) missing_items = list of checkpoint.item where hit < 1 (include both 0 and 0.5).
+5) Grade presentation_score (0–2):
+   - 2: dễ đọc, có bố cục (tiêu đề/đánh số), sạch sẽ
+   - 1: đọc được nhưng lộn xộn
+   - 0: rất khó đọc/nguệch ngoạc
+6) feedback: 3–7 gạch đầu dòng tiếng Việt, cực ngắn, actionable
+   - Nếu có missing_items: nêu rõ 2–4 ý thiếu quan trọng nhất
+   - Nêu 1 góp ý trình bày (nếu cần)
 
-B) presentation_score (0–2)
-- 2: clear structure (headings / numbering / bullet points), spacing, readable handwriting.
-- 1: somewhat readable but messy / weak structure.
-- 0: extremely messy OR very hard to read / illegible.
-
-Return JSON ONLY with this exact schema (no extra keys):
+OUTPUT JSON ONLY with EXACT schema (no extra keys):
 {
-  "content_score": number,
+  "checkpoints": [{"item": string, "hit": 0|0.5|1, "evidence": string}],
+  "coverage_ratio": number,
+  "missing_items": string[],
   "presentation_score": number,
-  "feedback": ["VN bullet points, cực ngắn, actionable (3–7 bullets)"]
+  "feedback": string[]
 }
-
-Feedback rules:
-- Vietnamese only.
-- Must mention what is MISSING compared to checklist (if checklist is present).
-- Must mention 1 presentation improvement (if any).
-- If checklist is EMPTY: explicitly say "Lesson này chưa có checklist nội dung bắt buộc" and ask admin to set it.
 `.trim();
 
     const content: any[] = [
@@ -228,19 +286,43 @@ Feedback rules:
       return NextResponse.json({ error: "Model returned non-JSON", raw }, { status: 500 });
     }
 
-    // Normalize + clamp hard
-    const out: NotebookEvalOut = {
-      content_score: clamp(toNum(parsed?.content_score, 0), 0, 4),
-      presentation_score: clamp(toNum(parsed?.presentation_score, 0), 0, 2),
-      feedback: toStringArray(parsed?.feedback).slice(0, 12),
-    };
+    // --- Normalize model outputs ---
+    const checkpoints = normalizeCheckpointArray(parsed?.checkpoints);
+    const modelCoverage = clamp(toNum(parsed?.coverage_ratio, 0), 0, 1);
+    const missingItems = toStringArray(parsed?.missing_items).slice(0, 30);
 
-    // Hard rule: if no checklist, content_score must be 0
-    if (!hasChecklist) out.content_score = 0;
+    const presentationScore = clamp(toNum(parsed?.presentation_score, 0), 0, 2);
+    let feedback = toStringArray(parsed?.feedback).slice(0, 12);
 
-    if (!out.feedback.length) {
-      out.feedback = ["- Thiếu phản hồi từ AI. Hãy chụp rõ hơn và viết đúng checklist."];
+    // --- Compute coverage ourselves (preferred) ---
+    const computedCoverage = computeCoverageFromCheckpoints(checkpoints);
+    const coverage = computedCoverage ?? modelCoverage;
+
+    // --- Derive content score from coverage thresholds ---
+    let contentScore = coverageToContentScore4(coverage);
+
+    // Hard rule: if no checklist, content must be 0 (no ground truth)
+    if (!hasChecklist) {
+      contentScore = 0;
+    } else {
+      // Hard guard: if missing_items exists => cannot be 4/4
+      // (4/4 means fully complete vs checklist)
+      if (missingItems.length > 0 && contentScore >= 4) {
+        contentScore = 3;
+      }
+
+      // Extra guard: if model returned no checkpoints but claimed high coverage, distrust
+      if (!checkpoints.length && modelCoverage >= 0.9) {
+        // Force at most 3 unless checkpoints are provided as evidence
+        contentScore = Math.min(contentScore, 3);
+      }
     }
+
+    const out: NotebookEvalOut = {
+      content_score: clamp(contentScore, 0, 4),
+      presentation_score: presentationScore,
+      feedback: feedback.length ? feedback : ["- Thiếu phản hồi từ AI. Hãy chụp rõ hơn và viết đúng checklist."],
+    };
 
     return NextResponse.json(out);
   } catch (e: any) {
