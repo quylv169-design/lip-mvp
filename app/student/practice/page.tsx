@@ -67,7 +67,10 @@ function buildAttemptBank(original: PracticeLessonBank): PracticeLessonBank {
  * - Ensures section ids won't collide by prefixing.
  * - Assumes question ids are unique across banks (recommended).
  */
-function mergeLessonBanks(lessonId: string, banks: Array<{ key: string; bank: PracticeLessonBank | null }>): PracticeLessonBank | null {
+function mergeLessonBanks(
+  lessonId: string,
+  banks: Array<{ key: string; bank: PracticeLessonBank | null }>
+): PracticeLessonBank | null {
   const parts = banks.filter((x) => x.bank && x.bank.sections?.length);
   if (!parts.length) return null;
 
@@ -132,6 +135,12 @@ function PracticeInner() {
     padding: 18,
   };
 
+  const containerStyle: React.CSSProperties = {
+    width: "100%",
+    maxWidth: 1700,
+    margin: "0 auto",
+  };
+
   // --------- Load session + lessons ----------
   useEffect(() => {
     (async () => {
@@ -188,9 +197,7 @@ function PracticeInner() {
       setLessons(rows);
 
       // chọn lesson theo URL nếu có, nếu không thì lấy lesson đầu tiên
-      const initial = rows.some((l) => l.id === lessonIdFromUrl)
-        ? lessonIdFromUrl
-        : rows[0]?.id || "";
+      const initial = rows.some((l) => l.id === lessonIdFromUrl) ? lessonIdFromUrl : rows[0]?.id || "";
       setSelectedLessonId(initial);
 
       setBooting(false);
@@ -302,14 +309,6 @@ function PracticeInner() {
   const remainingCount = useMemo(() => {
     return Math.max(0, totalQuestions - answeredCount);
   }, [totalQuestions, answeredCount]);
-
-  const canSubmit = useMemo(() => {
-    if (!attemptBank) return false;
-    if (totalQuestions <= 0) return false;
-    if (saving) return false;
-    // ✅ guard: must answer all before submit
-    return answeredCount >= totalQuestions;
-  }, [attemptBank, totalQuestions, saving, answeredCount]);
 
   const scoreVM = useMemo(() => {
     if (!attemptBank) return { correct: 0, total: 0, pct: 0 };
@@ -487,410 +486,190 @@ function PracticeInner() {
     minHeight: 180,
   };
 
+  const submitDisabled = !attemptBank || totalQuestions === 0 || saving || answeredCount < totalQuestions;
+
   return (
     <div style={pageStyle}>
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          alignItems: "center",
-          marginBottom: 12,
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <div style={{ fontSize: 18, fontWeight: 900 }}>Luyện tập / Practice</div>
-          <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
-            Chọn lesson để luyện ngay trong trang này. Nếu vào từ Dashboard theo lesson X, trang sẽ tự mở đúng lesson X.
+      {/* Wide container to use 1920px screens better */}
+      <div style={containerStyle}>
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "center",
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: 18, fontWeight: 900 }}>Luyện tập / Practice</div>
+            <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
+              Chọn lesson để luyện ngay trong trang này. Nếu vào từ Dashboard theo lesson X, trang sẽ tự mở đúng lesson X.
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button
+              onClick={() => router.push("/app")}
+              style={{
+                borderRadius: 10,
+                padding: "10px 12px",
+                border: `1px solid var(--btn-border)`,
+                background: "var(--btn-bg)",
+                cursor: "pointer",
+                fontWeight: 700,
+                color: "var(--text-primary)",
+              }}
+            >
+              ← Back Dashboard
+            </button>
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <button
-            onClick={() => router.push("/app")}
-            style={{
-              borderRadius: 10,
-              padding: "10px 12px",
-              border: `1px solid var(--btn-border)`,
-              background: "var(--btn-bg)",
-              cursor: "pointer",
-              fontWeight: 700,
-              color: "var(--text-primary)",
-            }}
-          >
-            ← Back Dashboard
-          </button>
-        </div>
-      </div>
-
-      {/* Main grid */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "380px 1fr 280px",
-          gap: 12,
-          alignItems: "start",
-        }}
-        className="practiceGrid"
-      >
-        {/* Left: Lesson picker + summary */}
+        {/* Main grid */}
         <div
           style={{
-            borderRadius: 14,
-            border: `1px solid var(--border)`,
-            background: "var(--bg-elev)",
-            boxShadow: "var(--shadow)",
-            padding: 12,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-            minHeight: 520,
+            display: "grid",
+            gridTemplateColumns: "380px 1fr 280px",
+            gap: 12,
+            alignItems: "start",
           }}
+          className="practiceGrid"
         >
-          <div style={{ fontWeight: 900 }}>Chọn lesson / Choose a lesson</div>
-
-          {/* Button-like dropdown */}
+          {/* Left: Lesson picker + summary */}
           <div
             style={{
-              position: "relative",
-              borderRadius: 12,
-              border: `1px solid var(--input-border)`,
-              background: "var(--input-bg)",
-              boxShadow: "0 1px 0 rgba(0,0,0,0.02)",
-              cursor: "pointer",
-              overflow: "hidden",
+              borderRadius: 14,
+              border: `1px solid var(--border)`,
+              background: "var(--bg-elev)",
+              boxShadow: "var(--shadow)",
+              padding: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+              minHeight: 520,
             }}
           >
+            <div style={{ fontWeight: 900 }}>Chọn lesson / Choose a lesson</div>
+
+            {/* Button-like dropdown */}
             <div
               style={{
-                height: 44,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "0 12px",
-                gap: 10,
-                userSelect: "none",
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 900,
-                  color: "var(--text-primary)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-                title={selectedLessonLabel}
-              >
-                {selectedLessonLabel}
-              </div>
-              <div style={{ color: "var(--text-muted)", fontWeight: 900 }}>▾</div>
-            </div>
-
-            <select
-              value={selectedLessonId}
-              onChange={(e) => setSelectedLessonId(e.target.value)}
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                opacity: 0,
+                position: "relative",
+                borderRadius: 12,
+                border: `1px solid var(--input-border)`,
+                background: "var(--input-bg)",
+                boxShadow: "0 1px 0 rgba(0,0,0,0.02)",
                 cursor: "pointer",
+                overflow: "hidden",
               }}
-              aria-label="Select lesson"
             >
-              {lessons.map((l) => (
-                <option key={l.id} value={l.id}>
-                  Lesson {l.order_index}: {l.title}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-            Tip: Link sẽ giữ <b>lessonId</b> trên URL để bạn refresh vẫn không mất lesson đang luyện.
-          </div>
-
-          <div style={{ marginTop: 6, borderTop: `1px solid var(--border)`, paddingTop: 10 }}>
-            <div style={{ fontWeight: 900, marginBottom: 6 }}>Kết quả / Result</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-              Đã chọn:{" "}
-              <b>
-                Lesson {lessons.find((l) => l.id === selectedLessonId)?.order_index ?? "-"}: {lessonTitle || "-"}
-              </b>
-              <br />
-              Tổng câu: <b>{totalQuestions}</b>
-            </div>
-
-            {lockedScore ? (
               <div
                 style={{
-                  marginTop: 12,
-                  borderRadius: 12,
-                  border: `1px solid var(--border)`,
-                  background: "var(--bg-soft)",
-                  padding: 10,
-                  fontSize: 12,
-                  lineHeight: 1.6,
+                  height: 44,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "0 12px",
+                  gap: 10,
+                  userSelect: "none",
                 }}
               >
-                {lockedScore.locked ? (
-                  <>
-                    🔒 <b>Điểm năng lực (đã chốt)</b>: <b>{lockedScore.correct}</b> / {lockedScore.total} (≈{" "}
-                    <b>{lockedScore.pct}%</b>)
-                  </>
-                ) : (
-                  <>
-                    ✅ <b>Kết quả lần làm này</b>: <b>{lockedScore.correct}</b> / {lockedScore.total} (≈{" "}
-                    <b>{lockedScore.pct}%</b>)
-                    <div style={{ marginTop: 6, color: "var(--text-muted)" }}>
-                      (Chưa chốt điểm năng lực. Bấm <b>Nộp bài</b> lần đầu sẽ chốt vào hồ sơ.)
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-                Làm xong rồi bấm <b>Nộp bài</b> để xem đáp án & giải thích.
-              </div>
-            )}
-
-            {saveMsg ? (
-              <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-                {saveMsg}
-              </div>
-            ) : null}
-
-            {guardMsg ? (
-              <div
-                style={{
-                  marginTop: 10,
-                  borderRadius: 12,
-                  border: "1px solid rgba(220,38,38,0.25)",
-                  background: "rgba(220,38,38,0.06)",
-                  padding: 10,
-                  fontSize: 12,
-                  color: "var(--text-primary)",
-                  lineHeight: 1.6,
-                  fontWeight: 800,
-                }}
-              >
-                {guardMsg}
-              </div>
-            ) : null}
-          </div>
-
-          <div style={{ marginTop: "auto", fontSize: 11, color: "var(--text-faint)" }}>
-            User: {userId ? `${userId.slice(0, 8)}…` : "-"}
-          </div>
-        </div>
-
-        {/* Middle: Practice frame */}
-        <div
-          style={{
-            borderRadius: 14,
-            border: `1px solid var(--border)`,
-            background: "var(--bg-elev)",
-            boxShadow: "var(--shadow)",
-            padding: 12,
-            minHeight: 520,
-            overflow: "hidden",
-          }}
-        >
-          {!attemptBank ? (
-            <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6 }}>
-              Chưa có bài tập cho lesson này trong “bank”.
-              <br />
-              (MVP) Bạn có thể thêm bank theo lessonId trong file: <b>lib/practice/bank.ts</b>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {attemptBank.sections.map((sec) => (
                 <div
-                  key={sec.id}
                   style={{
-                    borderRadius: 14,
+                    fontWeight: 900,
+                    color: "var(--text-primary)",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                  title={selectedLessonLabel}
+                >
+                  {selectedLessonLabel}
+                </div>
+                <div style={{ color: "var(--text-muted)", fontWeight: 900 }}>▾</div>
+              </div>
+
+              <select
+                value={selectedLessonId}
+                onChange={(e) => setSelectedLessonId(e.target.value)}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  opacity: 0,
+                  cursor: "pointer",
+                }}
+                aria-label="Select lesson"
+              >
+                {lessons.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    Lesson {l.order_index}: {l.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+              Tip: Link sẽ giữ <b>lessonId</b> trên URL để bạn refresh vẫn không mất lesson đang luyện.
+            </div>
+
+            <div style={{ marginTop: 6, borderTop: `1px solid var(--border)`, paddingTop: 10 }}>
+              <div style={{ fontWeight: 900, marginBottom: 6 }}>Kết quả / Result</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                Đã chọn:{" "}
+                <b>
+                  Lesson {lessons.find((l) => l.id === selectedLessonId)?.order_index ?? "-"}: {lessonTitle || "-"}
+                </b>
+                <br />
+                Tổng câu: <b>{totalQuestions}</b>
+              </div>
+
+              {lockedScore ? (
+                <div
+                  style={{
+                    marginTop: 12,
+                    borderRadius: 12,
                     border: `1px solid var(--border)`,
                     background: "var(--bg-soft)",
-                    padding: 12,
+                    padding: 10,
+                    fontSize: 12,
+                    lineHeight: 1.6,
                   }}
                 >
-                  <div style={{ fontWeight: 950, color: "var(--text-primary)" }}>
-                    {sec.titleVi}
-                    <span style={{ color: "var(--text-muted)", fontWeight: 700 }}> — {sec.titleEn}</span>
-                  </div>
-
-                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 12 }}>
-                    {sec.questions.map((q) => {
-                      const chosen = answers[q.id];
-                      const show = submitted;
-
-                      return (
-                        <div
-                          key={q.id}
-                          style={{
-                            borderRadius: 12,
-                            border: `1px solid var(--border)`,
-                            background: "var(--bg-elev)",
-                            padding: 10,
-                          }}
-                        >
-                          <div style={{ fontWeight: 800, marginBottom: 8, color: "var(--text-primary)" }}>
-                            {q.prompt}
-                          </div>
-
-                          <div style={{ display: "grid", gap: 8 }}>
-                            {q.choices.map((c, idx) => {
-                              const isChosen = chosen === idx;
-                              const isCorrect = idx === q.answerIndex;
-
-                              let border = `1px solid var(--border)`;
-                              let bg = "var(--bg-elev)";
-
-                              if (show) {
-                                if (isCorrect) {
-                                  border = "1px solid rgba(34,197,94,0.40)";
-                                  bg = "rgba(34,197,94,0.08)";
-                                } else if (isChosen && !isCorrect) {
-                                  border = "1px solid rgba(220,38,38,0.35)";
-                                  bg = "rgba(220,38,38,0.06)";
-                                }
-                              } else if (isChosen) {
-                                border = `1px solid rgba(37,99,235,0.35)`;
-                                bg = "rgba(37,99,235,0.06)";
-                              }
-
-                              const showIcon = show && isChosen;
-                              const icon = showIcon ? (isCorrect ? "✅" : "❌") : "";
-
-                              return (
-                                <button
-                                  key={idx}
-                                  onClick={() => onChoose(q.id, idx)}
-                                  style={{
-                                    textAlign: "left",
-                                    borderRadius: 12,
-                                    border,
-                                    background: bg,
-                                    padding: "10px 10px",
-                                    cursor: "pointer",
-                                    fontWeight: 700,
-                                    color: "var(--text-primary)",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                  }}
-                                >
-                                  <span style={{ width: 22, display: "inline-flex", justifyContent: "center" }}>
-                                    {showIcon ? icon : String.fromCharCode(65 + idx) + "."}
-                                  </span>
-                                  <span>{c.text}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-
-                          {/* Explain only after Submit */}
-                          {submitted ? (
-                            <div
-                              style={{
-                                marginTop: 10,
-                                borderRadius: 12,
-                                border: "1px solid rgba(245,158,11,0.35)",
-                                background: "rgba(245,158,11,0.10)",
-                                padding: "10px 10px",
-                                fontSize: 13,
-                                color: "var(--text-primary)",
-                                fontWeight: 800,
-                                lineHeight: 1.65,
-                                display: "flex",
-                                gap: 8,
-                                alignItems: "flex-start",
-                              }}
-                            >
-                              <span style={{ marginTop: 1 }}>💡</span>
-                              <span>{(q as any).explainVi || "Chưa có giải thích."}</span>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-
-              {/* Bottom actions */}
-              <div
-                style={{
-                  borderRadius: 14,
-                  border: `1px solid var(--border)`,
-                  background: "var(--bg-soft)",
-                  padding: 12,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 10,
-                  flexWrap: "wrap",
-                }}
-              >
-                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  {savedAttempt ? (
+                  {lockedScore.locked ? (
                     <>
-                      🔒 Điểm năng lực (đã chốt): <b>{savedAttempt.correct_count}</b> / {savedAttempt.total_count} (≈{" "}
-                      <b>{savedAttempt.pct}%</b>)
-                    </>
-                  ) : submitted ? (
-                    <>
-                      ✅ Kết quả lần làm này: <b>{scoreVM.correct}</b> / {scoreVM.total} (≈ <b>{scoreVM.pct}%</b>)
+                      🔒 <b>Điểm năng lực (đã chốt)</b>: <b>{lockedScore.correct}</b> / {lockedScore.total} (≈{" "}
+                      <b>{lockedScore.pct}%</b>)
                     </>
                   ) : (
                     <>
-                      Đã làm: <b>{answeredCount}</b> / {totalQuestions} câu{" "}
-                      {remainingCount > 0 ? <span>• còn thiếu <b>{remainingCount}</b> câu</span> : null}
+                      ✅ <b>Kết quả lần làm này</b>: <b>{lockedScore.correct}</b> / {lockedScore.total} (≈{" "}
+                      <b>{lockedScore.pct}%</b>)
+                      <div style={{ marginTop: 6, color: "var(--text-muted)" }}>
+                        (Chưa chốt điểm năng lực. Bấm <b>Nộp bài</b> lần đầu sẽ chốt vào hồ sơ.)
+                      </div>
                     </>
                   )}
                 </div>
-
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button
-                    onClick={handleSubmit}
-                    disabled={!attemptBank || totalQuestions === 0 || saving}
-                    style={{
-                      borderRadius: 10,
-                      padding: "10px 12px",
-                      border: `1px solid var(--btn-primary-border)`,
-                      background: "var(--btn-primary-bg)",
-                      cursor: attemptBank && totalQuestions && !saving ? "pointer" : "not-allowed",
-                      fontWeight: 900,
-                      color: "var(--text-primary)",
-                      opacity: saving ? 0.8 : 1,
-                    }}
-                  >
-                    {saving ? "Đang lưu..." : "Nộp bài / Submit"}
-                  </button>
-
-                  <button
-                    onClick={resetAttempt}
-                    style={{
-                      borderRadius: 10,
-                      padding: "10px 12px",
-                      border: `1px solid var(--btn-border)`,
-                      background: "var(--btn-bg)",
-                      cursor: "pointer",
-                      fontWeight: 800,
-                      color: "var(--text-primary)",
-                    }}
-                  >
-                    Làm lại / Reset (xáo đáp án)
-                  </button>
+              ) : (
+                <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                  Làm xong rồi bấm <b>Nộp bài</b> để xem đáp án & giải thích.
                 </div>
-              </div>
+              )}
+
+              {saveMsg ? (
+                <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                  {saveMsg}
+                </div>
+              ) : null}
 
               {guardMsg ? (
                 <div
                   style={{
+                    marginTop: 10,
                     borderRadius: 12,
                     border: "1px solid rgba(220,38,38,0.25)",
                     background: "rgba(220,38,38,0.06)",
@@ -904,80 +683,314 @@ function PracticeInner() {
                   {guardMsg}
                 </div>
               ) : null}
-
-              {saveMsg ? (
-                <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>{saveMsg}</div>
-              ) : null}
             </div>
-          )}
-        </div>
 
-        {/* Right: Sticky progress panel */}
-        <div style={stickyBox} className="stickyPanel">
-          <div style={{ fontWeight: 950 }}>Tiến độ làm bài</div>
+            <div style={{ marginTop: "auto", fontSize: 11, color: "var(--text-faint)" }}>
+              User: {userId ? `${userId.slice(0, 8)}…` : "-"}
+            </div>
+          </div>
 
+          {/* Middle: Practice frame */}
           <div
             style={{
-              borderRadius: 12,
+              borderRadius: 14,
               border: `1px solid var(--border)`,
-              background: "var(--bg-soft)",
-              padding: 10,
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-              fontSize: 12,
-              color: "var(--text-primary)",
-              lineHeight: 1.6,
+              background: "var(--bg-elev)",
+              boxShadow: "var(--shadow)",
+              padding: 12,
+              minHeight: 520,
+              overflow: "hidden",
             }}
           >
-            <div>
-              Đã làm: <b>{answeredCount}</b> / {totalQuestions} câu
-            </div>
-            <div>
-              Còn thiếu: <b>{remainingCount}</b> câu
-            </div>
+            {!attemptBank ? (
+              <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6 }}>
+                Chưa có bài tập cho lesson này trong “bank”.
+                <br />
+                (MVP) Bạn có thể thêm bank theo lessonId trong file: <b>lib/practice/bank.ts</b>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {attemptBank.sections.map((sec) => (
+                  <div
+                    key={sec.id}
+                    style={{
+                      borderRadius: 14,
+                      border: `1px solid var(--border)`,
+                      background: "var(--bg-soft)",
+                      padding: 12,
+                    }}
+                  >
+                    <div style={{ fontWeight: 950, color: "var(--text-primary)" }}>
+                      {sec.titleVi}
+                      <span style={{ color: "var(--text-muted)", fontWeight: 700 }}> — {sec.titleEn}</span>
+                    </div>
+
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 12 }}>
+                      {sec.questions.map((q) => {
+                        const chosen = answers[q.id];
+                        const show = submitted;
+
+                        return (
+                          <div
+                            key={q.id}
+                            style={{
+                              borderRadius: 12,
+                              border: `1px solid var(--border)`,
+                              background: "var(--bg-elev)",
+                              padding: 10,
+                            }}
+                          >
+                            <div style={{ fontWeight: 800, marginBottom: 8, color: "var(--text-primary)" }}>
+                              {q.prompt}
+                            </div>
+
+                            <div style={{ display: "grid", gap: 8 }}>
+                              {q.choices.map((c, idx) => {
+                                const isChosen = chosen === idx;
+                                const isCorrect = idx === q.answerIndex;
+
+                                let border = `1px solid var(--border)`;
+                                let bg = "var(--bg-elev)";
+
+                                if (show) {
+                                  if (isCorrect) {
+                                    border = "1px solid rgba(34,197,94,0.40)";
+                                    bg = "rgba(34,197,94,0.08)";
+                                  } else if (isChosen && !isCorrect) {
+                                    border = "1px solid rgba(220,38,38,0.35)";
+                                    bg = "rgba(220,38,38,0.06)";
+                                  }
+                                } else if (isChosen) {
+                                  border = `1px solid rgba(37,99,235,0.35)`;
+                                  bg = "rgba(37,99,235,0.06)";
+                                }
+
+                                const showIcon = show && isChosen;
+                                const icon = showIcon ? (isCorrect ? "✅" : "❌") : "";
+
+                                return (
+                                  <button
+                                    key={idx}
+                                    onClick={() => onChoose(q.id, idx)}
+                                    style={{
+                                      textAlign: "left",
+                                      borderRadius: 12,
+                                      border,
+                                      background: bg,
+                                      padding: "10px 10px",
+                                      cursor: "pointer",
+                                      fontWeight: 700,
+                                      color: "var(--text-primary)",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <span style={{ width: 22, display: "inline-flex", justifyContent: "center" }}>
+                                      {showIcon ? icon : String.fromCharCode(65 + idx) + "."}
+                                    </span>
+                                    <span>{c.text}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {/* Explain only after Submit */}
+                            {submitted ? (
+                              <div
+                                style={{
+                                  marginTop: 10,
+                                  borderRadius: 12,
+                                  border: "1px solid rgba(245,158,11,0.35)",
+                                  background: "rgba(245,158,11,0.10)",
+                                  padding: "10px 10px",
+                                  fontSize: 13,
+                                  color: "var(--text-primary)",
+                                  fontWeight: 800,
+                                  lineHeight: 1.65,
+                                  display: "flex",
+                                  gap: 8,
+                                  alignItems: "flex-start",
+                                }}
+                              >
+                                <span style={{ marginTop: 1 }}>💡</span>
+                                <span>{(q as any).explainVi || "Chưa có giải thích."}</span>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Bottom actions */}
+                <div
+                  style={{
+                    borderRadius: 14,
+                    border: `1px solid var(--border)`,
+                    background: "var(--bg-soft)",
+                    padding: 12,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 10,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    {savedAttempt ? (
+                      <>
+                        🔒 Điểm năng lực (đã chốt): <b>{savedAttempt.correct_count}</b> / {savedAttempt.total_count} (≈{" "}
+                        <b>{savedAttempt.pct}%</b>)
+                      </>
+                    ) : submitted ? (
+                      <>
+                        ✅ Kết quả lần làm này: <b>{scoreVM.correct}</b> / {scoreVM.total} (≈ <b>{scoreVM.pct}%</b>)
+                      </>
+                    ) : (
+                      <>
+                        Đã làm: <b>{answeredCount}</b> / {totalQuestions} câu{" "}
+                        {remainingCount > 0 ? (
+                          <span>
+                            • còn thiếu <b>{remainingCount}</b> câu
+                          </span>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button
+                      onClick={handleSubmit}
+                      disabled={submitDisabled}
+                      style={{
+                        borderRadius: 10,
+                        padding: "10px 12px",
+                        border: `1px solid var(--btn-primary-border)`,
+                        background: "var(--btn-primary-bg)",
+                        cursor: submitDisabled ? "not-allowed" : "pointer",
+                        fontWeight: 900,
+                        color: "var(--text-primary)",
+                        opacity: saving ? 0.8 : submitDisabled ? 0.55 : 1,
+                      }}
+                      title={
+                        submitDisabled && remainingCount > 0
+                          ? `Bạn mới làm ${answeredCount}/${totalQuestions} câu`
+                          : undefined
+                      }
+                    >
+                      {saving ? "Đang lưu..." : "Nộp bài / Submit"}
+                    </button>
+
+                    <button
+                      onClick={resetAttempt}
+                      style={{
+                        borderRadius: 10,
+                        padding: "10px 12px",
+                        border: `1px solid var(--btn-border)`,
+                        background: "var(--btn-bg)",
+                        cursor: "pointer",
+                        fontWeight: 800,
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      Làm lại / Reset (xáo đáp án)
+                    </button>
+                  </div>
+                </div>
+
+                {guardMsg ? (
+                  <div
+                    style={{
+                      borderRadius: 12,
+                      border: "1px solid rgba(220,38,38,0.25)",
+                      background: "rgba(220,38,38,0.06)",
+                      padding: 10,
+                      fontSize: 12,
+                      color: "var(--text-primary)",
+                      lineHeight: 1.6,
+                      fontWeight: 800,
+                    }}
+                  >
+                    {guardMsg}
+                  </div>
+                ) : null}
+
+                {saveMsg ? (
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>{saveMsg}</div>
+                ) : null}
+              </div>
+            )}
           </div>
 
-          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-            {remainingCount > 0
-              ? "Bạn cần làm đủ tất cả câu thì mới Submit được."
-              : "OK rồi — bạn có thể Submit để xem đáp án & chốt điểm (lần đầu)."}
-          </div>
+          {/* Right: Sticky progress panel */}
+          <div style={stickyBox} className="stickyPanel">
+            <div style={{ fontWeight: 950 }}>Tiến độ làm bài</div>
 
-          {guardMsg ? (
             <div
               style={{
                 borderRadius: 12,
-                border: "1px solid rgba(220,38,38,0.25)",
-                background: "rgba(220,38,38,0.06)",
+                border: `1px solid var(--border)`,
+                background: "var(--bg-soft)",
                 padding: 10,
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
                 fontSize: 12,
-                fontWeight: 800,
+                color: "var(--text-primary)",
                 lineHeight: 1.6,
               }}
             >
-              {guardMsg}
+              <div>
+                Đã làm: <b>{answeredCount}</b> / {totalQuestions} câu
+              </div>
+              <div>
+                Còn thiếu: <b>{remainingCount}</b> câu
+              </div>
             </div>
-          ) : null}
 
-          <div style={{ marginTop: "auto", fontSize: 11, color: "var(--text-faint)" }}>
-            Tip: Reset sẽ xáo lại vị trí đáp án để tránh học “vị trí A/B/C/D”.
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+              {remainingCount > 0
+                ? "Bạn cần làm đủ tất cả câu thì mới Submit được."
+                : "OK rồi — bạn có thể Submit để xem đáp án & chốt điểm (lần đầu)."}
+            </div>
+
+            {guardMsg ? (
+              <div
+                style={{
+                  borderRadius: 12,
+                  border: "1px solid rgba(220,38,38,0.25)",
+                  background: "rgba(220,38,38,0.06)",
+                  padding: 10,
+                  fontSize: 12,
+                  fontWeight: 800,
+                  lineHeight: 1.6,
+                }}
+              >
+                {guardMsg}
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: "auto", fontSize: 11, color: "var(--text-faint)" }}>
+              Tip: Reset sẽ xáo lại vị trí đáp án để tránh học “vị trí A/B/C/D”.
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Responsive */}
-      <style jsx>{`
-        @media (max-width: 1100px) {
-          .practiceGrid {
-            grid-template-columns: 1fr !important;
+        {/* Responsive */}
+        <style jsx>{`
+          @media (max-width: 1100px) {
+            .practiceGrid {
+              grid-template-columns: 1fr !important;
+            }
+            .stickyPanel {
+              position: relative !important;
+              top: auto !important;
+            }
           }
-          .stickyPanel {
-            position: relative !important;
-            top: auto !important;
-          }
-        }
-      `}</style>
+        `}</style>
+      </div>
     </div>
   );
 }
