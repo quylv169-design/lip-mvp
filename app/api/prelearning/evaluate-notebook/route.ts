@@ -12,7 +12,7 @@ type NotebookEvalOut = {
 };
 
 type ModelCheckpoint = {
-  item: string; // short required point (derived from checklist)
+  item: string; // required point
   hit: number; // 0 | 0.5 | 1
   evidence?: string; // where/what seen in notebook
 };
@@ -76,12 +76,69 @@ function coverageToContentScore4(coverage: number): number {
 
 /**
  * Compute coverage from checkpoints (equal weights).
- * If model returns 0 checkpoints, return null.
+ * If checkpoints is empty, return 0 (strict).
  */
-function computeCoverageFromCheckpoints(checkpoints: ModelCheckpoint[]): number | null {
-  if (!checkpoints.length) return null;
+function computeCoverageFromCheckpoints(checkpoints: ModelCheckpoint[]): number {
+  if (!checkpoints.length) return 0;
   const sum = checkpoints.reduce((acc, cp) => acc + normalizeHit(cp.hit), 0);
   return clamp(sum / checkpoints.length, 0, 1);
+}
+
+/**
+ * Extract deterministic checkpoints from checklistForStudents (server-side),
+ * so the model cannot "cheat" by creating too few/too broad checkpoints.
+ *
+ * Heuristics:
+ * - Split by lines
+ * - Keep lines that look like bullets/numbered/meaningful text
+ * - Strip leading bullets/numbers
+ * - Deduplicate
+ * - Keep 6..12 items (cap at 12, if <6 keep what exists)
+ */
+function extractCheckpointsFromChecklist(checklist: string): string[] {
+  const rawLines = (checklist || "")
+    .split(/\r?\n/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  const cleaned: string[] = [];
+  for (let line of rawLines) {
+    // Strip typical prefixes: "- ", "• ", "* ", "1) ", "1. ", "1 - ", "– "
+    line = line.replace(/^\s*[-•*–—]\s+/g, "");
+    line = line.replace(/^\s*\d+\s*[\.\)\-–—]\s*/g, "");
+    line = line.replace(/\s+/g, " ").trim();
+
+    // Skip very short/noisy lines
+    if (line.length < 6) continue;
+
+    // Skip headings that are too generic
+    const low = line.toLowerCase();
+    if (
+      low === "ví dụ" ||
+      low === "ví dụ:" ||
+      low === "example" ||
+      low === "examples" ||
+      low === "lưu ý" ||
+      low === "note"
+    ) {
+      continue;
+    }
+
+    cleaned.push(line.slice(0, 120));
+  }
+
+  // Dedup (case-insensitive)
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const it of cleaned) {
+    const key = it.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(it);
+  }
+
+  // Keep up to 12 (truth-ground can be long; first lines are typically the required structure)
+  return deduped.slice(0, 12);
 }
 
 /**
@@ -184,6 +241,9 @@ Chấm theo 2 tiêu chí:
     // If checklist missing entirely, we still grade presentation, but content must be 0 (no ground truth).
     const hasChecklist = !!checklistForStudents;
 
+    // ✅ Deterministic checkpoints derived from truth ground
+    const derivedCheckpointItems = hasChecklist ? extractCheckpointsFromChecklist(checklistForStudents) : [];
+
     // ✅ Support many images, but cap to avoid oversized requests/cost
     const MAX_IMAGES = 10;
     const pick = files.slice(0, MAX_IMAGES);
@@ -197,12 +257,12 @@ Chấm theo 2 tiêu chí:
     );
 
     /**
-     * ✅ New scoring approach (MVP-strong):
-     * - Model must derive 6–12 "checkpoints" from checklistForStudents (major required points)
-     * - For each checkpoint, mark hit (0/0.5/1) based ONLY on what is visible in notebook photos
+     * ✅ Scoring approach (MVP-strong, deterministic checkpoints):
+     * - Server extracts checkpoints from checklistForStudents (cannot be gamed by model)
+     * - Model only evaluates each checkpoint hit (0/0.5/1) with evidence
      * - Server computes coverage_ratio = avg(hit)
      * - Server maps coverage_ratio -> content_score using strict thresholds
-     * - Hard rule: if missing_items is non-empty => cannot be 4/4
+     * - Server derives missing_items from hit<1 (ignores model-provided missing list)
      */
     const prompt = `
 You are grading a student's handwritten notebook for PRE-LEARNING.
@@ -211,12 +271,10 @@ ABSOLUTE RULES:
 - You MUST use the provided "Truth Ground" as the only ground truth for CONTENT.
 - You MUST grade ONLY based on what is visible in the uploaded notebook images.
 - DO NOT assume "maybe on another page". If you don't see it, it is missing.
-- If the writing is unrelated / random / doodles / off-topic => all checkpoints hit=0.
+- If the writing is unrelated / random / doodles / off-topic => all hits=0.
 - If handwriting is extremely illegible => presentation_score MUST be 0.
 - If checklistForStudents is EMPTY (missing truth ground), you MUST:
   - set checkpoints = []
-  - coverage_ratio = 0
-  - missing_items = []
   - presentation_score still graded (0–2)
   - feedback must say checklist is missing for this lesson (ask admin to set it).
 
@@ -230,30 +288,26 @@ ${checklistForStudents || "(EMPTY)"}
 --- scoringRubric ---
 ${scoringRubric}
 
+CHECKPOINTS (server-derived, do NOT change wording):
+${derivedCheckpointItems.length ? derivedCheckpointItems.map((x, i) => `${i + 1}) ${x}`).join("\n") : "(NONE)"}
+
 TASK (STRICT):
-1) From checklistForStudents, create 6–12 SHORT "checkpoints" (major required points).
-   - Each checkpoint should be a short phrase in Vietnamese (max ~12 words).
-   - DO NOT invent checkpoints not present in checklist.
-2) For each checkpoint, decide hit:
-   - 1   = clearly present in notebook images
-   - 0.5 = partially present / unclear / missing example / not complete
-   - 0   = not seen
-   Also add "evidence" (very short) describing what you saw (e.g., "Có dòng 'He/She/It + V(s/es)'").
-3) Compute coverage_ratio = average(hit) across checkpoints (0..1).
-4) missing_items = list of checkpoint.item where hit < 1 (include both 0 and 0.5).
-5) Grade presentation_score (0–2):
-   - 2: dễ đọc, có bố cục (tiêu đề/đánh số), sạch sẽ
-   - 1: đọc được nhưng lộn xộn
-   - 0: rất khó đọc/nguệch ngoạc
-6) feedback: 3–7 gạch đầu dòng tiếng Việt, cực ngắn, actionable
-   - Nếu có missing_items: nêu rõ 2–4 ý thiếu quan trọng nhất
-   - Nêu 1 góp ý trình bày (nếu cần)
+- For EACH checkpoint above, return:
+  - hit = 1   if clearly present in notebook images
+  - hit = 0.5 if partially present / unclear / missing example / not complete
+  - hit = 0   if not seen
+  - evidence: very short phrase of what you saw (Vietnamese OK)
+- Grade presentation_score (0–2):
+  - 2: dễ đọc, có bố cục (tiêu đề/đánh số), sạch sẽ
+  - 1: đọc được nhưng lộn xộn
+  - 0: rất khó đọc/nguệch ngoạc
+- feedback: 3–7 gạch đầu dòng tiếng Việt, cực ngắn, actionable
+  - nếu thiếu: nêu 2–4 ý thiếu quan trọng nhất
+  - nêu 1 góp ý trình bày (nếu cần)
 
 OUTPUT JSON ONLY with EXACT schema (no extra keys):
 {
   "checkpoints": [{"item": string, "hit": 0|0.5|1, "evidence": string}],
-  "coverage_ratio": number,
-  "missing_items": string[],
   "presentation_score": number,
   "feedback": string[]
 }
@@ -287,16 +341,40 @@ OUTPUT JSON ONLY with EXACT schema (no extra keys):
     }
 
     // --- Normalize model outputs ---
-    const checkpoints = normalizeCheckpointArray(parsed?.checkpoints);
-    const modelCoverage = clamp(toNum(parsed?.coverage_ratio, 0), 0, 1);
-    const missingItems = toStringArray(parsed?.missing_items).slice(0, 30);
-
+    const modelCheckpoints = normalizeCheckpointArray(parsed?.checkpoints);
     const presentationScore = clamp(toNum(parsed?.presentation_score, 0), 0, 2);
     let feedback = toStringArray(parsed?.feedback).slice(0, 12);
 
-    // --- Compute coverage ourselves (preferred) ---
-    const computedCoverage = computeCoverageFromCheckpoints(checkpoints);
-    const coverage = computedCoverage ?? modelCoverage;
+    // --- Build final checkpoints aligned to server-derived items ---
+    let finalCheckpoints: ModelCheckpoint[] = [];
+
+    if (!hasChecklist) {
+      finalCheckpoints = [];
+    } else {
+      const byItem = new Map<string, ModelCheckpoint>();
+      for (const cp of modelCheckpoints) {
+        const key = safeStr(cp.item).toLowerCase();
+        if (!key) continue;
+        // keep first occurrence
+        if (!byItem.has(key)) byItem.set(key, cp);
+      }
+
+      finalCheckpoints = derivedCheckpointItems.map((item) => {
+        const key = item.toLowerCase();
+        const m = byItem.get(key);
+        return {
+          item,
+          hit: m ? normalizeHit(m.hit) : 0,
+          evidence: m?.evidence ? safeStr(m.evidence).slice(0, 280) : undefined,
+        };
+      });
+    }
+
+    // --- Compute coverage ourselves (ONLY from final checkpoints) ---
+    const coverage = computeCoverageFromCheckpoints(finalCheckpoints);
+
+    // --- missing items computed from final checkpoints (ignore model missing_items) ---
+    const missingItems = finalCheckpoints.filter((cp) => normalizeHit(cp.hit) < 1).map((cp) => cp.item);
 
     // --- Derive content score from coverage thresholds ---
     let contentScore = coverageToContentScore4(coverage);
@@ -305,15 +383,14 @@ OUTPUT JSON ONLY with EXACT schema (no extra keys):
     if (!hasChecklist) {
       contentScore = 0;
     } else {
-      // Hard guard: if missing_items exists => cannot be 4/4
-      // (4/4 means fully complete vs checklist)
+      // Hard guard: if any missing => cannot be 4/4
       if (missingItems.length > 0 && contentScore >= 4) {
         contentScore = 3;
       }
 
-      // Extra guard: if model returned no checkpoints but claimed high coverage, distrust
-      if (!checkpoints.length && modelCoverage >= 0.9) {
-        // Force at most 3 unless checkpoints are provided as evidence
+      // Extra guard: if derived checkpoints are suspiciously few, cap score (prevents “too generic truth ground”)
+      // (We still allow full points when checklist truly short, but in MVP it's safer.)
+      if (derivedCheckpointItems.length > 0 && derivedCheckpointItems.length < 4) {
         contentScore = Math.min(contentScore, 3);
       }
     }
