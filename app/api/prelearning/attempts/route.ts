@@ -89,10 +89,14 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Query failed", detail: error.message }, { status: 500 });
     }
 
-    // ✅ Sign notebook images (note: bucket is "prelearning-notebooks")
+    // ✅ Sign notebook images (bucket: "prelearning-notebooks")
     const out: any[] = [];
-    for (const row of data ?? []) {
-      const paths: string[] = Array.isArray((row as any).notebook_image_urls) ? (row as any).notebook_image_urls : [];
+    for (const row of (data ?? []) as any[]) {
+      // Guard type để tránh TS: "Spread types may only be created from object types"
+      const base: Record<string, any> =
+        row && typeof row === "object" && !Array.isArray(row) ? (row as Record<string, any>) : {};
+
+      const paths: string[] = Array.isArray(base.notebook_image_urls) ? base.notebook_image_urls : [];
       const signedUrls: string[] = [];
 
       for (const p of paths) {
@@ -107,8 +111,11 @@ export async function GET(req: Request) {
       }
 
       out.push({
-        ...row,
-        notebook_images: signedUrls, // signed URLs for rendering
+        ...base,
+        // Giữ nguyên dữ liệu gốc để debug
+        notebook_image_paths: paths,
+        // Trả thêm signed urls để FE render được
+        notebook_images: signedUrls,
       });
     }
 
