@@ -42,11 +42,28 @@ type AttemptRow = {
   student_id: string;
   created_at: string;
 
+  seed?: string | null;
+
   total_score: number | null;
+  notebook_content_score?: number | null;
+  notebook_presentation_score?: number | null;
   quiz_score?: number | null;
   questions_score?: number | null;
 
+  pre_quiz_total?: number | null;
+  pre_quiz_correct?: number | null;
+
+  // Stored paths in DB
   notebook_image_urls?: string[] | null;
+
+  // Signed URLs from API
+  notebook_images?: string[] | null;
+
+  // Quiz + questions detail
+  quiz_payload?: any;
+  quiz_answers?: number[] | null;
+  questions?: string[] | null;
+
   ai_feedback?: any;
 };
 
@@ -387,6 +404,29 @@ export default function StudentDashboard() {
     }
   }
 
+  async function fetchSignedPrelearningAttempts(params: { classId: string; studentId: string; lessonIds: string[] }) {
+    const { data: auth } = await supabase.auth.getSession();
+    const accessToken = auth.session?.access_token;
+    if (!accessToken) return { attempts: [] as AttemptRow[], error: "Missing session token" };
+
+    const qs = new URLSearchParams();
+    qs.set("classId", params.classId);
+    qs.set("studentId", params.studentId);
+    if (params.lessonIds.length) qs.set("lessonIds", params.lessonIds.join(","));
+    qs.set("limit", "300");
+
+    const res = await fetch(`/api/prelearning/attempts?${qs.toString()}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return { attempts: [] as AttemptRow[], error: String(json?.error || "Failed to load attempts") };
+
+    const attempts = Array.isArray(json?.attempts) ? (json.attempts as AttemptRow[]) : [];
+    return { attempts, error: "" };
+  }
+
   async function loadStudentDashboardState(opts?: { preferActiveClassId?: string }) {
     setBooting(true);
     setErr("");
@@ -538,7 +578,7 @@ export default function StudentDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  // ----- LOAD LESSONS + LATEST PRELEARNING + LATEST PRACTICE -----
+  // ----- LOAD LESSONS + LATEST PRELEARNING (SIGNED) + LATEST PRACTICE -----
   useEffect(() => {
     (async () => {
       if (!activeClassId || !userId) return;
@@ -567,21 +607,22 @@ export default function StudentDashboard() {
 
       const lessonIds = lessonList.map((l) => l.id);
 
-      // Prelearning attempts (latest per lesson)
-      const { data: attemptRows, error: attemptErr } = await supabase
-        .from("prelearning_attempts")
-        .select("id,lesson_id,class_id,student_id,created_at,total_score,notebook_image_urls,ai_feedback,quiz_score,questions_score")
-        .eq("class_id", activeClassId)
-        .eq("student_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(300);
+      // ✅ Load signed prelearning attempts (once)
+      const { attempts: signedAttempts, error: signedErr } = await fetchSignedPrelearningAttempts({
+        classId: activeClassId,
+        studentId: userId,
+        lessonIds,
+      });
 
-      if (attemptErr) setErr(attemptErr.message);
+      if (signedErr) {
+        // Don't hard fail UI (still show lessons)
+        console.warn("[StudentDashboard] signed attempts error:", signedErr);
+      }
 
       const latestPreByLesson = new Map<string, AttemptRow>();
-      (attemptRows as any[] | null)?.forEach((a) => {
+      signedAttempts.forEach((a) => {
         const lid = String(a.lesson_id);
-        if (!latestPreByLesson.has(lid)) latestPreByLesson.set(lid, a as AttemptRow);
+        if (!latestPreByLesson.has(lid)) latestPreByLesson.set(lid, a);
       });
 
       // ✅ Practice attempts (latest per lesson)
@@ -628,7 +669,7 @@ export default function StudentDashboard() {
           prelearningDone: !!latestPre,
           practiceDone: !!latestPrac,
 
-          prelearningScore: latestPre?.total_score ?? null,
+          prelearningScore: (latestPre?.total_score as any) ?? null,
           prelearningCreatedAt: latestPre?.created_at,
 
           practiceCorrect: latestPrac?.correct_count ?? null,
@@ -1163,7 +1204,7 @@ export default function StudentDashboard() {
                                   </button>
                                 </div>
 
-                                <div style={styles.tiny} title={l.slidePath}>
+                                <div style={styles.tiny} title={l.slidePath ?? ""}>
                                   slide_path: <span style={{ opacity: 0.85 }}>{l.slidePath}</span>
                                 </div>
                               </>
@@ -1282,7 +1323,7 @@ export default function StudentDashboard() {
             </div>
 
             {joinMsg ? (
-              <div style={{ ...styles.tiny, color: joinMsg.startsWith("✅") ? "rgba(170,255,210,0.95)" : "var(--lip-error, #0F5132)" }}>
+              <div style={{ ...styles.tiny, color: joinMsg.startsWith("✅") ? "rgba(170,255,210,0.95)" : "var(--lip-error, #ffb4b4)" }}>
                 {joinMsg}
               </div>
             ) : null}
@@ -1637,7 +1678,20 @@ export default function StudentDashboard() {
                 <b style={{ opacity: 0.95 }}>{detailLesson.prelearningScore != null ? `${detailLesson.prelearningScore}/10` : "-"}</b>{" "}
                 <span style={{ opacity: 0.65 }}>• {detailLesson.prelearningCreatedAt ? safeDate(detailLesson.prelearningCreatedAt) : ""}</span>
               </div>
-              <div style={styles.tiny}>MVP: show notebook thumbnails + feedback preview. Sau sẽ show đủ quiz + answers + weak points.</div>
+
+              {/* ✅ Show quiz + questions summary */}
+              <div style={styles.tiny}>
+                Quiz:{" "}
+                <b style={{ opacity: 0.95 }}>
+                  {typeof detailLesson.latestAttempt?.pre_quiz_correct === "number" && typeof detailLesson.latestAttempt?.pre_quiz_total === "number"
+                    ? `${detailLesson.latestAttempt?.pre_quiz_correct}/${detailLesson.latestAttempt?.pre_quiz_total}`
+                    : "—"}
+                </b>{" "}
+                • Questions:{" "}
+                <b style={{ opacity: 0.95 }}>{Array.isArray(detailLesson.latestAttempt?.questions) ? detailLesson.latestAttempt!.questions!.length : 0}</b>
+              </div>
+
+              <div style={styles.tiny}>MVP: show notebook thumbnails + quiz result + questions + feedback preview.</div>
             </div>
 
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
@@ -1646,7 +1700,7 @@ export default function StudentDashboard() {
             </div>
 
             <div style={styles.gridImgs}>
-              {(detailLesson.latestAttempt?.notebook_image_urls ?? []).filter(Boolean).map((u, idx) => (
+              {(detailLesson.latestAttempt?.notebook_images ?? []).filter(Boolean).map((u, idx) => (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   key={`${u}-${idx}`}
@@ -1660,9 +1714,35 @@ export default function StudentDashboard() {
                 />
               ))}
 
-              {(detailLesson.latestAttempt?.notebook_image_urls ?? []).length === 0 ? (
-                <div style={styles.muted}>Chưa có ảnh notebook trong attempt này.</div>
+              {(detailLesson.latestAttempt?.notebook_images ?? []).length === 0 ? (
+                <div style={styles.muted}>Chưa có ảnh notebook (signed) trong attempt này.</div>
               ) : null}
+            </div>
+
+            {/* ✅ Quiz details (optional preview) */}
+            <div style={styles.cardMini}>
+              <div style={{ fontWeight: 950, fontSize: 13 }}>Quiz + Questions</div>
+
+              <div style={styles.tiny}>
+                Pre-quiz:{" "}
+                <b style={{ opacity: 0.95 }}>
+                  {typeof detailLesson.latestAttempt?.pre_quiz_correct === "number" && typeof detailLesson.latestAttempt?.pre_quiz_total === "number"
+                    ? `${detailLesson.latestAttempt?.pre_quiz_correct}/${detailLesson.latestAttempt?.pre_quiz_total}`
+                    : "—"}
+                </b>
+              </div>
+
+              {Array.isArray(detailLesson.latestAttempt?.questions) && detailLesson.latestAttempt!.questions!.length > 0 ? (
+                <div style={{ ...styles.muted, lineHeight: 1.6 }}>
+                  {detailLesson.latestAttempt!.questions!.slice(0, 10).map((q, i) => (
+                    <div key={i}>• {q}</div>
+                  ))}
+                </div>
+              ) : (
+                <div style={styles.tiny}>Chưa có câu hỏi nào được lưu trong attempt này.</div>
+              )}
+
+              <div style={styles.tiny}>(MVP) Nếu cần show đáp án đúng/sai từng câu, mình sẽ render từ quiz_payload + quiz_answers.</div>
             </div>
 
             <div style={styles.cardMini}>
