@@ -22,7 +22,76 @@ function toNum(v: any, fallback = 0) {
 
 function toStringArray(v: any) {
   if (!Array.isArray(v)) return [];
-  return v.filter((x) => typeof x === "string").map((s) => s.trim()).filter(Boolean);
+  return v
+    .filter((x) => typeof x === "string")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function safeStr(v: any) {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/**
+ * Resolve Truth Ground in this priority:
+ * 1) From client formData: requiredNotes / checklistForStudents, scoringRubric
+ * 2) TRUTH_GROUND[lessonId]
+ * 3) Fuzzy match by lessonTitle inside TRUTH_GROUND values (title/lessonTitle)
+ */
+function resolveTruthGround(opts: {
+  lessonId: string;
+  lessonTitle: string;
+  requiredNotes: string;
+  checklistOverride: string;
+  rubricOverride: string;
+}): { checklistForStudents: string; scoringRubric: string; source: string } {
+  const { lessonId, lessonTitle, requiredNotes, checklistOverride, rubricOverride } = opts;
+
+  // 1) from client payload (new)
+  const checklistFromClient = (checklistOverride || requiredNotes || "").trim();
+  const rubricFromClient = (rubricOverride || "").trim();
+  if (checklistFromClient || rubricFromClient) {
+    return {
+      checklistForStudents: checklistFromClient,
+      scoringRubric: rubricFromClient,
+      source: "client",
+    };
+  }
+
+  // 2) from TRUTH_GROUND by lessonId (legacy)
+  const truthById: any = (TRUTH_GROUND as any)?.[lessonId];
+  const checklistById = safeStr(truthById?.checklistForStudents);
+  const rubricById = safeStr(truthById?.scoringRubric);
+  if (checklistById || rubricById) {
+    return { checklistForStudents: checklistById, scoringRubric: rubricById, source: "truth_ground:lessonId" };
+  }
+
+  // 3) fuzzy match by title (for cloned lessons where lessonId changed)
+  const values = Object.values(TRUTH_GROUND as any) as any[];
+  const normalizedTitle = (lessonTitle || "").trim().toLowerCase();
+
+  let best: any = null;
+  for (const v of values) {
+    const t1 = safeStr(v?.lessonTitle).toLowerCase();
+    const t2 = safeStr(v?.title).toLowerCase();
+    if (!normalizedTitle) continue;
+    if (t1 && t1 === normalizedTitle) {
+      best = v;
+      break;
+    }
+    if (t2 && t2 === normalizedTitle) {
+      best = v;
+      break;
+    }
+  }
+
+  const checklistByTitle = safeStr(best?.checklistForStudents);
+  const rubricByTitle = safeStr(best?.scoringRubric);
+  if (checklistByTitle || rubricByTitle) {
+    return { checklistForStudents: checklistByTitle, scoringRubric: rubricByTitle, source: "truth_ground:lessonTitle" };
+  }
+
+  return { checklistForStudents: "", scoringRubric: "", source: "missing" };
 }
 
 export async function POST(req: Request) {
@@ -32,6 +101,11 @@ export async function POST(req: Request) {
     const lessonTitle = String(formData.get("lessonTitle") ?? "").trim();
     const lessonId = String(formData.get("lessonId") ?? "").trim();
     const files = formData.getAll("files") as File[];
+
+    // OPTIONAL: allow UI (or other callers) to pass these directly
+    const requiredNotes = String(formData.get("requiredNotes") ?? "").trim(); // same as "Nội dung bắt buộc phải chép"
+    const checklistOverride = String(formData.get("checklistForStudents") ?? "").trim();
+    const rubricOverride = String(formData.get("scoringRubric") ?? "").trim();
 
     if (!lessonTitle) {
       return NextResponse.json({ error: "Missing lessonTitle" }, { status: 400 });
@@ -43,24 +117,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing images" }, { status: 400 });
     }
 
-    const truth: any = (TRUTH_GROUND as any)?.[lessonId];
-    const checklistForStudents = typeof truth?.checklistForStudents === "string" ? truth.checklistForStudents.trim() : "";
-    const scoringRubric = typeof truth?.scoringRubric === "string" ? truth.scoringRubric.trim() : "";
+    const resolved = resolveTruthGround({
+      lessonId,
+      lessonTitle,
+      requiredNotes,
+      checklistOverride,
+      rubricOverride,
+    });
 
-    // 🚫 Không có truth ground => không chấm theo cảm tính
-    if (!checklistForStudents || !scoringRubric) {
-      return NextResponse.json(
-        {
-          error: "Missing truth ground",
-          detail: "TRUTH_GROUND[lessonId] must include checklistForStudents and scoringRubric",
-          lessonId,
-        },
-        { status: 422 }
-      );
-    }
+    // ✅ Default rubric (so cloned classes still work even if truth ground missing)
+    const defaultRubric = `
+Chấm theo 2 tiêu chí:
+- content_score (0–4): đối chiếu đúng checklistForStudents. Thiếu ý quan trọng trừ điểm. Nếu không có nội dung đúng checklist => 0.
+- presentation_score (0–2): 2 rõ ràng/dễ đọc; 1 tạm được nhưng lộn xộn; 0 rất khó đọc/không nghiêm túc.
+`.trim();
 
-    // MVP: chấm tối đa 2 trang cho nhanh + rẻ
-    const pick = files.slice(0, 2);
+    const checklistForStudents = resolved.checklistForStudents.trim();
+    const scoringRubric = (resolved.scoringRubric || defaultRubric).trim();
+
+    // If checklist missing entirely, we still grade presentation, but content must be 0 (no ground truth).
+    const hasChecklist = !!checklistForStudents;
+
+    // ✅ Support many images, but cap to avoid oversized requests/cost
+    const MAX_IMAGES = 6;
+    const pick = files.slice(0, MAX_IMAGES);
 
     const images = await Promise.all(
       pick.map(async (f) => {
@@ -74,17 +154,22 @@ export async function POST(req: Request) {
 You are grading a student's handwritten notebook for PRE-LEARNING.
 
 IMPORTANT:
-- You MUST use the provided "Truth Ground" as the only ground truth.
+- You MUST use the provided "Truth Ground" as the only ground truth for CONTENT.
 - Do NOT grade based on vibe, length, or effort alone.
 - If the writing is unrelated / random / doodles / off-topic => content_score MUST be 0.
 - If handwriting is extremely illegible => presentation_score MUST be 0.
+- If checklistForStudents is EMPTY (missing truth ground), you MUST:
+  - set content_score = 0
+  - still grade presentation_score (0–2)
+  - feedback must tell admin/student that checklist is missing for this lesson.
 
 Lesson: ${lessonTitle}
 LessonId: ${lessonId}
+TruthGroundSource: ${resolved.source}
 
 TRUTH GROUND (must follow):
 --- checklistForStudents ---
-${checklistForStudents}
+${checklistForStudents || "(EMPTY)"}
 --- scoringRubric ---
 ${scoringRubric}
 
@@ -95,6 +180,7 @@ A) content_score (0–4)
 - If only 0–1 minor pieces present => content_score 1 max.
 - If none of the required parts are present => content_score 0.
 - "Wrote a lot" does NOT earn points unless it matches checklist content.
+${hasChecklist ? "" : "- Since checklist is EMPTY, content_score MUST be 0."}
 
 B) presentation_score (0–2)
 - 2: clear structure (headings / numbering / bullet points), spacing, readable handwriting.
@@ -110,8 +196,9 @@ Return JSON ONLY with this exact schema (no extra keys):
 
 Feedback rules:
 - Vietnamese only.
-- Must mention what is MISSING compared to checklist (if any).
+- Must mention what is MISSING compared to checklist (if checklist is present).
 - Must mention 1 presentation improvement (if any).
+- If checklist is EMPTY: explicitly say "Lesson này chưa có checklist nội dung bắt buộc" and ask admin to set it.
 `.trim();
 
     const content: any[] = [
@@ -124,8 +211,7 @@ Feedback rules:
       messages: [
         {
           role: "system",
-          content:
-            "You are a strict, rubric-driven grader. You follow the Truth Ground exactly. Output valid JSON only.",
+          content: "You are a strict, rubric-driven grader. Output valid JSON only.",
         },
         { role: "user", content },
       ],
@@ -149,16 +235,15 @@ Feedback rules:
       feedback: toStringArray(parsed?.feedback).slice(0, 12),
     };
 
-    // Extra hard guard: if model returns empty feedback, provide a minimal fallback
+    // Hard rule: if no checklist, content_score must be 0
+    if (!hasChecklist) out.content_score = 0;
+
     if (!out.feedback.length) {
       out.feedback = ["- Thiếu phản hồi từ AI. Hãy chụp rõ hơn và viết đúng checklist."];
     }
 
     return NextResponse.json(out);
   } catch (e: any) {
-    return NextResponse.json(
-      { error: "Internal server error", detail: e?.message ?? String(e) },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error", detail: e?.message ?? String(e) }, { status: 500 });
   }
 }
