@@ -221,6 +221,117 @@ function mapJoinRpcErrorMessage(errMsg: string) {
   return "";
 }
 
+// -------------------- AI FEEDBACK HELPERS (human-friendly render) --------------------
+type NormalizedAiFeedback = {
+  notebook: string[];
+  questions: string[];
+  rewrite: string[];
+  other: Array<{ key: string; value: any }>;
+};
+
+function isNonEmptyString(x: any): x is string {
+  return typeof x === "string" && x.trim().length > 0;
+}
+
+function toStringList(maybeList: any): string[] {
+  if (!maybeList) return [];
+  if (Array.isArray(maybeList)) return maybeList.map((x) => String(x ?? "").trim()).filter((s) => s.length > 0);
+  if (isNonEmptyString(maybeList)) return [maybeList.trim()];
+  return [];
+}
+
+function normalizeAiFeedback(raw: any): NormalizedAiFeedback {
+  const out: NormalizedAiFeedback = { notebook: [], questions: [], rewrite: [], other: [] };
+
+  if (!raw || typeof raw !== "object") return out;
+
+  // Common key patterns we might see from different prompt versions
+  const notebookKeys = [
+    "notebook_feedback",
+    "notebook",
+    "notebookNotes",
+    "notebook_notes",
+    "notebook_comments",
+    "notebook_comment",
+    "notebook_feedback_preview",
+    "notebook_feedback_list",
+  ];
+
+  const questionKeys = [
+    "questions_feedback",
+    "question_feedback",
+    "questions",
+    "quiz_feedback",
+    "quiz",
+    "q_feedback",
+    "common_mistakes",
+    "mistakes",
+  ];
+
+  const rewriteKeys = ["rewrite_suggestions", "rewrite", "suggestions", "suggested_rewrites", "rewrite_tips"];
+
+  for (const k of notebookKeys) {
+    if (raw[k] != null) out.notebook.push(...toStringList(raw[k]));
+  }
+  for (const k of questionKeys) {
+    if (raw[k] != null) out.questions.push(...toStringList(raw[k]));
+  }
+  for (const k of rewriteKeys) {
+    if (raw[k] != null) out.rewrite.push(...toStringList(raw[k]));
+  }
+
+  // Some versions might nest under sections
+  const sectionCandidates = ["sections", "feedback", "ai", "result"];
+  for (const sk of sectionCandidates) {
+    const sec = raw[sk];
+    if (!sec || typeof sec !== "object") continue;
+    // try nested keys again
+    for (const k of notebookKeys) if (sec[k] != null) out.notebook.push(...toStringList(sec[k]));
+    for (const k of questionKeys) if (sec[k] != null) out.questions.push(...toStringList(sec[k]));
+    for (const k of rewriteKeys) if (sec[k] != null) out.rewrite.push(...toStringList(sec[k]));
+  }
+
+  // Dedup while keeping order
+  const dedup = (arr: string[]) => {
+    const seen = new Set<string>();
+    const res: string[] = [];
+    for (const s of arr) {
+      const key = s.trim();
+      if (!key) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      res.push(key);
+    }
+    return res;
+  };
+  out.notebook = dedup(out.notebook);
+  out.questions = dedup(out.questions);
+  out.rewrite = dedup(out.rewrite);
+
+  // Any remaining keys we didn't map (for transparency/debug)
+  const used = new Set<string>([
+    ...notebookKeys,
+    ...questionKeys,
+    ...rewriteKeys,
+    ...sectionCandidates,
+  ]);
+  Object.keys(raw).forEach((k) => {
+    if (used.has(k)) return;
+    if (raw[k] == null) return;
+    out.other.push({ key: k, value: raw[k] });
+  });
+
+  return out;
+}
+
+function stringifySafe(obj: any) {
+  try {
+    return JSON.stringify(obj ?? {}, null, 2);
+  } catch {
+    return String(obj ?? "");
+  }
+}
+
 export default function StudentDashboard() {
   const router = useRouter();
 
@@ -246,6 +357,9 @@ export default function StudentDashboard() {
   // Lightbox
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState("");
+
+  // ✅ Lightbox "fit in view" (no scroll by default) + optional raw size
+  const [lightboxNatural, setLightboxNatural] = useState<{ w: number; h: number } | null>(null);
 
   // Slide modal
   const [slideOpen, setSlideOpen] = useState(false);
@@ -682,6 +796,8 @@ export default function StudentDashboard() {
 
   // ✅ FIX: ƯU TIÊN full_name trong profiles (v_my_profile), nếu chưa có thì dùng user_metadata, cuối cùng mới "Student"
   // (KHÔNG hiển thị email nữa)
+  // NOTE: Nếu bạn thực sự muốn KHÔNG dùng local-part email làm fallback để tránh lộ email dạng "info.company",
+  // bạn có thể bỏ fallback "userEmailName" ở đây. Nhưng theo handover: fallback cuối cùng là "Student".
   const displayName = useMemo(() => {
     const a = (me?.full_name ?? "").trim();
     if (a) return a;
@@ -689,12 +805,9 @@ export default function StudentDashboard() {
     const b = (userMetaName ?? "").trim();
     if (b) return b;
 
-    // fallback cuối cùng: lấy local-part email (không render email, chỉ dùng để tạo tên)
-    const c = (userEmailName ?? "").trim();
-    if (c) return c;
-
+    // fallback cuối cùng: ưu tiên "Student" (tránh render dạng email local-part)
     return "Student";
-  }, [me?.full_name, userMetaName, userEmailName]);
+  }, [me?.full_name, userMetaName]);
 
   const profileSummary = useMemo(() => {
     const total = lessons.length;
@@ -972,6 +1085,56 @@ export default function StudentDashboard() {
       objectFit: "cover",
       background: "var(--lip-surface-0, rgba(255,255,255,0.02))",
       cursor: "pointer",
+    },
+
+    // ✅ New: feedback section styles
+    feedbackWrap: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
+    },
+    feedbackGrid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: 10,
+    },
+    feedbackCard: {
+      borderRadius: 14,
+      border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
+      background: "var(--lip-surface-0, rgba(255,255,255,0.03))",
+      padding: 12,
+      display: "flex",
+      flexDirection: "column",
+      gap: 8,
+      minHeight: 120,
+    },
+    feedbackTitle: { fontWeight: 950, fontSize: 12, letterSpacing: 0.2, opacity: 0.95 },
+    feedbackList: {
+      margin: 0,
+      paddingLeft: 16,
+      fontSize: 12,
+      lineHeight: 1.6,
+      opacity: 0.88,
+      maxHeight: 180,
+      overflow: "auto",
+      paddingRight: 6,
+    },
+    feedbackEmpty: { fontSize: 12, opacity: 0.7, lineHeight: 1.6 },
+    toggleRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 },
+    rawBox: {
+      margin: 0,
+      fontSize: 11,
+      lineHeight: 1.5,
+      opacity: 0.85,
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      maxHeight: 240,
+      overflow: "auto",
+      paddingRight: 6,
+      borderRadius: 12,
+      border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
+      background: "rgba(0,0,0,0.18)",
+      padding: 10,
     },
   };
 
@@ -1502,6 +1665,9 @@ export default function StudentDashboard() {
           .grid4 {
             grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
           }
+          .feedbackGrid {
+            grid-template-columns: 1fr !important;
+          }
         }
         @media (max-width: 720px) {
           .grid4 {
@@ -1687,6 +1853,7 @@ export default function StudentDashboard() {
                   alt={`notebook ${idx + 1}`}
                   style={styles.imgThumb}
                   onClick={() => {
+                    setLightboxNatural(null);
                     setLightboxUrl(u);
                     setLightboxOpen(true);
                   }}
@@ -1724,21 +1891,11 @@ export default function StudentDashboard() {
               <div style={styles.tiny}>(MVP) Nếu cần show đáp án đúng/sai từng câu, mình sẽ render từ quiz_payload + quiz_answers.</div>
             </div>
 
-            <div style={styles.cardMini}>
-              <div style={{ fontWeight: 950, fontSize: 13 }}>AI feedback (preview)</div>
-              <pre
-                style={{
-                  margin: 0,
-                  fontSize: 11,
-                  lineHeight: 1.5,
-                  opacity: 0.85,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                }}
-              >
-                {JSON.stringify(detailLesson.latestAttempt?.ai_feedback ?? {}, null, 2)}
-              </pre>
-            </div>
+            {/* ✅ AI feedback: human-friendly + optional raw JSON */}
+            <AiFeedbackPreview
+              raw={detailLesson.latestAttempt?.ai_feedback}
+              styles={styles}
+            />
 
             <div style={styles.btnRow}>
               <Link href={`/student/prelearning/${detailLesson.id}`} style={styles.btnPrimary as any}>
@@ -1756,12 +1913,12 @@ export default function StudentDashboard() {
           onClick={() => {
             setLightboxOpen(false);
             setLightboxUrl("");
+            setLightboxNatural(null);
           }}
         >
           <div
             style={{
               width: "min(1100px, 96vw)",
-              maxHeight: "92vh",
               borderRadius: 18,
               border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
               background: "var(--lip-modal-bg, rgba(16,16,16,0.92))",
@@ -1771,25 +1928,50 @@ export default function StudentDashboard() {
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-              <div style={{ fontWeight: 950, fontSize: 13 }}>Notebook image</div>
+              <div style={{ fontWeight: 950, fontSize: 13, display: "flex", gap: 10, alignItems: "center" }}>
+                <span>Notebook image</span>
+                {lightboxNatural ? (
+                  <span style={styles.tiny}>
+                    {lightboxNatural.w}×{lightboxNatural.h}
+                  </span>
+                ) : null}
+              </div>
               <button
                 style={styles.btnGhost}
                 onClick={() => {
                   setLightboxOpen(false);
                   setLightboxUrl("");
+                  setLightboxNatural(null);
                 }}
               >
                 Close
               </button>
             </div>
 
-            <div style={{ marginTop: 10, overflow: "auto" }}>
+            {/* ✅ Fit-in-view (no scroll) */}
+            <div
+              style={{
+                marginTop: 10,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "100%",
+                maxHeight: "85vh",
+              }}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={lightboxUrl}
                 alt="notebook full"
+                onLoad={(e) => {
+                  const img = e.currentTarget;
+                  if (img?.naturalWidth && img?.naturalHeight) setLightboxNatural({ w: img.naturalWidth, h: img.naturalHeight });
+                }}
                 style={{
-                  width: "100%",
+                  maxWidth: "100%",
+                  maxHeight: "85vh",
+                  width: "auto",
+                  height: "auto",
                   borderRadius: 14,
                   border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
                   objectFit: "contain",
@@ -1797,9 +1979,107 @@ export default function StudentDashboard() {
                 }}
               />
             </div>
+
+            <div style={{ marginTop: 10, ...styles.tiny, opacity: 0.7 }}>
+              Tip: nếu muốn zoom sau này, mình sẽ thêm controls (+/−) và pan.
+            </div>
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// -------------------- Inline component to keep file single --------------------
+function AiFeedbackPreview({
+  raw,
+  styles,
+}: {
+  raw: any;
+  styles: Record<string, React.CSSProperties>;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
+
+  const normalized = useMemo(() => normalizeAiFeedback(raw), [raw]);
+  const hasAny =
+    normalized.notebook.length > 0 || normalized.questions.length > 0 || normalized.rewrite.length > 0;
+
+  return (
+    <div style={styles.cardMini as any}>
+      <div style={{ ...styles.toggleRow }}>
+        <div style={{ fontWeight: 950, fontSize: 13 }}>AI feedback</div>
+
+        <button
+          type="button"
+          style={styles.btnGhost as any}
+          onClick={() => setShowRaw((v) => !v)}
+          title="Toggle raw JSON (debug)"
+        >
+          {showRaw ? "Hide raw" : "View raw JSON"}
+        </button>
+      </div>
+
+      {!hasAny ? (
+        <div style={styles.muted as any}>Chưa có feedback.</div>
+      ) : (
+        <div style={styles.feedbackWrap as any}>
+          <div style={styles.feedbackGrid as any} className="feedbackGrid">
+            <div style={styles.feedbackCard as any}>
+              <div style={styles.feedbackTitle as any}>📒 Notebook</div>
+              {normalized.notebook.length ? (
+                <ul style={styles.feedbackList as any}>
+                  {normalized.notebook.map((x, i) => (
+                    <li key={i}>{x}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div style={styles.feedbackEmpty as any}>Chưa có nhận xét notebook.</div>
+              )}
+            </div>
+
+            <div style={styles.feedbackCard as any}>
+              <div style={styles.feedbackTitle as any}>🧩 Questions</div>
+              {normalized.questions.length ? (
+                <ul style={styles.feedbackList as any}>
+                  {normalized.questions.map((x, i) => (
+                    <li key={i}>{x}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div style={styles.feedbackEmpty as any}>Chưa có nhận xét questions.</div>
+              )}
+            </div>
+
+            <div style={styles.feedbackCard as any}>
+              <div style={styles.feedbackTitle as any}>✍️ Rewrite</div>
+              {normalized.rewrite.length ? (
+                <ul style={styles.feedbackList as any}>
+                  {normalized.rewrite.map((x, i) => (
+                    <li key={i}>{x}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div style={styles.feedbackEmpty as any}>Chưa có gợi ý rewrite.</div>
+              )}
+            </div>
+          </div>
+
+          {normalized.other.length ? (
+            <div style={{ ...styles.tiny, opacity: 0.72 }}>
+              (Debug) Các field khác:{" "}
+              {normalized.other.slice(0, 6).map((o, i) => (
+                <span key={o.key}>
+                  <b style={{ opacity: 0.9 }}>{o.key}</b>
+                  {i < Math.min(normalized.other.length, 6) - 1 ? ", " : ""}
+                </span>
+              ))}
+              {normalized.other.length > 6 ? "…" : ""}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {showRaw ? <pre style={styles.rawBox as any}>{stringifySafe(raw)}</pre> : null}
     </div>
   );
 }
