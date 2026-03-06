@@ -34,6 +34,10 @@ function shuffleArray<T>(arr: T[]) {
   return a;
 }
 
+function stripLeadingQuestionNumber(text: string) {
+  return text.replace(/^\s*\d+\)\s*/, "").trim();
+}
+
 /**
  * Create a "fresh attempt bank" where each question's choices are shuffled.
  * answerIndex is remapped to match the new order.
@@ -62,7 +66,7 @@ function buildAttemptBank(original: PracticeLessonBank): PracticeLessonBank {
 }
 
 /**
- * Merge multiple lesson banks (e.g., PRACTICE + THEORY) into one bank for rendering.
+ * Merge multiple lesson banks (e.g., THEORY + PRACTICE) into one bank for rendering.
  * - Keeps sections order: banks[] order, then their sections.
  * - Ensures section ids won't collide by prefixing.
  * - Assumes question ids are unique across banks (recommended).
@@ -216,7 +220,7 @@ function PracticeInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLessonId]);
 
-  // Bank gốc cho lesson hiện tại (merge PRACTICE + THEORY)
+  // Bank gốc cho lesson hiện tại (merge THEORY + PRACTICE, theory phải lên trước)
   const mergedBank: PracticeLessonBank | null = useMemo(() => {
     if (!selectedLessonId) return null;
 
@@ -224,8 +228,8 @@ function PracticeInner() {
     const theory = THEORY_BANK[selectedLessonId] ?? null;
 
     return mergeLessonBanks(selectedLessonId, [
-      { key: "practice", bank: practice },
       { key: "theory", bank: theory },
+      { key: "practice", bank: practice },
     ]);
   }, [selectedLessonId]);
 
@@ -327,6 +331,20 @@ function PracticeInner() {
     const pct = total ? Math.round((correct / total) * 100) : 0;
     return { correct, total, pct };
   }, [attemptBank, answers]);
+
+  const questionNumberMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    if (!attemptBank) return map;
+
+    let counter = 1;
+    for (const sec of attemptBank.sections) {
+      for (const q of sec.questions) {
+        map[q.id] = counter;
+        counter += 1;
+      }
+    }
+    return map;
+  }, [attemptBank]);
 
   // What to display as "năng lực đã chốt"
   const lockedScore = useMemo(() => {
@@ -729,6 +747,8 @@ function PracticeInner() {
                       {sec.questions.map((q) => {
                         const chosen = answers[q.id];
                         const show = submitted;
+                        const questionNo = questionNumberMap[q.id] ?? 0;
+                        const promptText = stripLeadingQuestionNumber(q.prompt);
 
                         return (
                           <div
@@ -741,7 +761,7 @@ function PracticeInner() {
                             }}
                           >
                             <div style={{ fontWeight: 800, marginBottom: 8, color: "var(--text-primary)" }}>
-                              {q.prompt}
+                              {questionNo}) {promptText}
                             </div>
 
                             <div style={{ display: "grid", gap: 8 }}>
