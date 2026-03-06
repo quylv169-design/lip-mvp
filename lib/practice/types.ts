@@ -10,6 +10,7 @@ export type PracticeQuestion = {
   choices: PracticeChoice[]; // 4 đáp án
   answerIndex: number; // index đáp án đúng (0..3)
   explainVi?: string; // giải thích tiếng Việt (optional)
+  skill_tag?: string; // tag kỹ năng để tracking analytics / AI feedback
 };
 
 export type PracticeSection = {
