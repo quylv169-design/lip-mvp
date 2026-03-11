@@ -143,7 +143,7 @@ function extractCheckpointsFromChecklist(checklist: string): string[] {
 
 /**
  * Resolve Truth Ground in this priority:
- * 1) From client formData: requiredNotes / checklistForStudents, scoringRubric
+ * 1) From client formData: requiredNotes / checklistForStudents, rubric / scoringRubric
  * 2) TRUTH_GROUND[lessonId]
  * 3) Fuzzy match by lessonTitle inside TRUTH_GROUND values (title/lessonTitle)
  */
@@ -154,7 +154,13 @@ function resolveTruthGround(opts: {
   checklistOverride: string;
   rubricOverride: string;
 }): { checklistForStudents: string; scoringRubric: string; source: string } {
-  const { lessonId, lessonTitle, requiredNotes, checklistOverride, rubricOverride } = opts;
+  const {
+    lessonId,
+    lessonTitle,
+    requiredNotes,
+    checklistOverride,
+    rubricOverride,
+  } = opts;
 
   // 1) from client payload (new)
   const checklistFromClient = (checklistOverride || requiredNotes || "").trim();
@@ -172,7 +178,11 @@ function resolveTruthGround(opts: {
   const checklistById = safeStr(truthById?.checklistForStudents);
   const rubricById = safeStr(truthById?.scoringRubric);
   if (checklistById || rubricById) {
-    return { checklistForStudents: checklistById, scoringRubric: rubricById, source: "truth_ground:lessonId" };
+    return {
+      checklistForStudents: checklistById,
+      scoringRubric: rubricById,
+      source: "truth_ground:lessonId",
+    };
   }
 
   // 3) fuzzy match by title (for cloned lessons where lessonId changed)
@@ -197,7 +207,11 @@ function resolveTruthGround(opts: {
   const checklistByTitle = safeStr(best?.checklistForStudents);
   const rubricByTitle = safeStr(best?.scoringRubric);
   if (checklistByTitle || rubricByTitle) {
-    return { checklistForStudents: checklistByTitle, scoringRubric: rubricByTitle, source: "truth_ground:lessonTitle" };
+    return {
+      checklistForStudents: checklistByTitle,
+      scoringRubric: rubricByTitle,
+      source: "truth_ground:lessonTitle",
+    };
   }
 
   return { checklistForStudents: "", scoringRubric: "", source: "missing" };
@@ -213,12 +227,23 @@ export async function POST(req: Request) {
 
     // OPTIONAL: allow UI (or other callers) to pass these directly
     const requiredNotes = String(formData.get("requiredNotes") ?? "").trim(); // same as "Nội dung bắt buộc phải chép"
-    const checklistOverride = String(formData.get("checklistForStudents") ?? "").trim();
-    const rubricOverride = String(formData.get("scoringRubric") ?? "").trim();
+    const checklistOverride = String(
+      formData.get("checklistForStudents") ?? ""
+    ).trim();
 
-    if (!lessonTitle) return NextResponse.json({ error: "Missing lessonTitle" }, { status: 400 });
-    if (!lessonId) return NextResponse.json({ error: "Missing lessonId" }, { status: 400 });
-    if (!files || files.length === 0) return NextResponse.json({ error: "Missing images" }, { status: 400 });
+    // support both new field name "rubric" and old field name "scoringRubric"
+    const rubricField = String(formData.get("rubric") ?? "").trim();
+    const scoringRubricField = String(
+      formData.get("scoringRubric") ?? ""
+    ).trim();
+    const rubricOverride = (rubricField || scoringRubricField).trim();
+
+    if (!lessonTitle)
+      return NextResponse.json({ error: "Missing lessonTitle" }, { status: 400 });
+    if (!lessonId)
+      return NextResponse.json({ error: "Missing lessonId" }, { status: 400 });
+    if (!files || files.length === 0)
+      return NextResponse.json({ error: "Missing images" }, { status: 400 });
 
     const resolved = resolveTruthGround({
       lessonId,
@@ -242,7 +267,9 @@ Chấm theo 2 tiêu chí:
     const hasChecklist = !!checklistForStudents;
 
     // ✅ Deterministic checkpoints derived from truth ground
-    const derivedCheckpointItems = hasChecklist ? extractCheckpointsFromChecklist(checklistForStudents) : [];
+    const derivedCheckpointItems = hasChecklist
+      ? extractCheckpointsFromChecklist(checklistForStudents)
+      : [];
 
     // ✅ Support many images, but cap to avoid oversized requests/cost
     const MAX_IMAGES = 10;
@@ -269,6 +296,7 @@ You are grading a student's handwritten notebook for PRE-LEARNING.
 
 ABSOLUTE RULES:
 - You MUST use the provided "Truth Ground" as the only ground truth for CONTENT.
+- You MUST use the provided "scoringRubric" as the grading policy for both content and presentation.
 - You MUST grade ONLY based on what is visible in the uploaded notebook images.
 - DO NOT assume "maybe on another page". If you don't see it, it is missing.
 - If the writing is unrelated / random / doodles / off-topic => all hits=0.
@@ -289,7 +317,11 @@ ${checklistForStudents || "(EMPTY)"}
 ${scoringRubric}
 
 CHECKPOINTS (server-derived, do NOT change wording):
-${derivedCheckpointItems.length ? derivedCheckpointItems.map((x, i) => `${i + 1}) ${x}`).join("\n") : "(NONE)"}
+${
+  derivedCheckpointItems.length
+    ? derivedCheckpointItems.map((x, i) => `${i + 1}) ${x}`).join("\n")
+    : "(NONE)"
+}
 
 TASK (STRICT):
 - For EACH checkpoint above, return:
@@ -297,13 +329,14 @@ TASK (STRICT):
   - hit = 0.5 if partially present / unclear / missing example / not complete
   - hit = 0   if not seen
   - evidence: very short phrase of what you saw (Vietnamese OK)
-- Grade presentation_score (0–2):
+- Grade presentation_score (0–2) according to scoringRubric. If scoringRubric is vague, follow:
   - 2: dễ đọc, có bố cục (tiêu đề/đánh số), sạch sẽ
   - 1: đọc được nhưng lộn xộn
   - 0: rất khó đọc/nguệch ngoạc
 - feedback: 3–7 gạch đầu dòng tiếng Việt, cực ngắn, actionable
   - nếu thiếu: nêu 2–4 ý thiếu quan trọng nhất
   - nêu 1 góp ý trình bày (nếu cần)
+  - if rubric has specific emphasis, reflect it in feedback
 
 OUTPUT JSON ONLY with EXACT schema (no extra keys):
 {
@@ -323,7 +356,8 @@ OUTPUT JSON ONLY with EXACT schema (no extra keys):
       messages: [
         {
           role: "system",
-          content: "You are a strict, rubric-driven grader. Output valid JSON only.",
+          content:
+            "You are a strict, rubric-driven grader. Output valid JSON only.",
         },
         { role: "user", content },
       ],
@@ -337,7 +371,10 @@ OUTPUT JSON ONLY with EXACT schema (no extra keys):
     try {
       parsed = JSON.parse(raw);
     } catch {
-      return NextResponse.json({ error: "Model returned non-JSON", raw }, { status: 500 });
+      return NextResponse.json(
+        { error: "Model returned non-JSON", raw },
+        { status: 500 }
+      );
     }
 
     // --- Normalize model outputs ---
@@ -374,7 +411,9 @@ OUTPUT JSON ONLY with EXACT schema (no extra keys):
     const coverage = computeCoverageFromCheckpoints(finalCheckpoints);
 
     // --- missing items computed from final checkpoints (ignore model missing_items) ---
-    const missingItems = finalCheckpoints.filter((cp) => normalizeHit(cp.hit) < 1).map((cp) => cp.item);
+    const missingItems = finalCheckpoints
+      .filter((cp) => normalizeHit(cp.hit) < 1)
+      .map((cp) => cp.item);
 
     // --- Derive content score from coverage thresholds ---
     let contentScore = coverageToContentScore4(coverage);
@@ -398,11 +437,16 @@ OUTPUT JSON ONLY with EXACT schema (no extra keys):
     const out: NotebookEvalOut = {
       content_score: clamp(contentScore, 0, 4),
       presentation_score: presentationScore,
-      feedback: feedback.length ? feedback : ["- Thiếu phản hồi từ AI. Hãy chụp rõ hơn và viết đúng checklist."],
+      feedback: feedback.length
+        ? feedback
+        : ["- Thiếu phản hồi từ AI. Hãy chụp rõ hơn và viết đúng checklist."],
     };
 
     return NextResponse.json(out);
   } catch (e: any) {
-    return NextResponse.json({ error: "Internal server error", detail: e?.message ?? String(e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error", detail: e?.message ?? String(e) },
+      { status: 500 }
+    );
   }
 }
