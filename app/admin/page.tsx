@@ -1,4 +1,3 @@
-// app/admin/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -49,19 +48,18 @@ export default function AdminPage() {
   const [busyLessonId, setBusyLessonId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>("");
 
-  // accordion
   const [expandedLessonId, setExpandedLessonId] = useState<string | null>(null);
-  const [lessonDrafts, setLessonDrafts] = useState<Record<string, LessonDraft>>({});
+  const [lessonDrafts, setLessonDrafts] = useState<Record<string, LessonDraft>>(
+    {}
+  );
   const [addingLesson, setAddingLesson] = useState(false);
 
-  // ✅ Viewer state (Admin can view slide)
   const [viewOpen, setViewOpen] = useState(false);
   const [viewTitle, setViewTitle] = useState<string>("");
   const [viewUpdatedAt, setViewUpdatedAt] = useState<string | null>(null);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
 
-  // ✅ Clone/seed busy state
   const [cloneBusy, setCloneBusy] = useState(false);
 
   const selectedClass = useMemo(
@@ -69,7 +67,6 @@ export default function AdminPage() {
     [classes, selectedClassId]
   );
 
-  // ✅ Template class: LIP-EL-001 (MVP default)
   const templateClass = useMemo(
     () => classes.find((c) => c.name === "LIP-EL-001") ?? null,
     [classes]
@@ -165,7 +162,6 @@ export default function AdminPage() {
     })();
   }, [selectedClassId, expandedLessonId]);
 
-  // ✅ Close viewer on ESC
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -344,7 +340,12 @@ export default function AdminPage() {
     }
 
     if (section === "prelearningJson") {
-      if (!validateJsonArray(draft.prelearningJson, `${lesson.title} — Prelearning Quiz`)) {
+      if (
+        !validateJsonArray(
+          draft.prelearningJson,
+          `${lesson.title} — Prelearning Quiz`
+        )
+      ) {
         return;
       }
       setMsg(
@@ -354,7 +355,9 @@ export default function AdminPage() {
     }
 
     if (section === "theoryJson") {
-      if (!validateJsonArray(draft.theoryJson, `${lesson.title} — Theory Questions`)) {
+      if (
+        !validateJsonArray(draft.theoryJson, `${lesson.title} — Theory Questions`)
+      ) {
         return;
       }
       setMsg(
@@ -364,7 +367,12 @@ export default function AdminPage() {
     }
 
     if (section === "practiceJson") {
-      if (!validateJsonArray(draft.practiceJson, `${lesson.title} — Practice Questions`)) {
+      if (
+        !validateJsonArray(
+          draft.practiceJson,
+          `${lesson.title} — Practice Questions`
+        )
+      ) {
         return;
       }
       setMsg(
@@ -444,7 +452,10 @@ export default function AdminPage() {
 
       const { error: upErr } = await supabase.storage
         .from("slides")
-        .upload(path, file, { upsert: true, contentType: file.type || undefined });
+        .upload(path, file, {
+          upsert: true,
+          contentType: file.type || undefined,
+        });
 
       if (upErr) {
         setMsg("Upload lên Storage lỗi: " + upErr.message);
@@ -469,7 +480,9 @@ export default function AdminPage() {
 
       setLessons((prev) =>
         prev.map((l) =>
-          l.id === lesson.id ? { ...l, slide_path: path, slide_updated_at: nowIso } : l
+          l.id === lesson.id
+            ? { ...l, slide_path: path, slide_updated_at: nowIso }
+            : l
         )
       );
 
@@ -497,11 +510,15 @@ export default function AdminPage() {
   async function cloneFromTemplate() {
     if (!selectedClassId) return;
     if (!templateClass) {
-      setMsg("❌ Không tìm thấy class template tên 'LIP-EL-001'. Hãy tạo/đổi tên class template đúng.");
+      setMsg(
+        "❌ Không tìm thấy class template tên 'LIP-EL-001'. Hãy tạo/đổi tên class template đúng."
+      );
       return;
     }
     if (templateClass.id === selectedClassId) {
-      setMsg("ℹ️ Bạn đang chọn chính class template (LIP-EL-001). Không cần clone.");
+      setMsg(
+        "ℹ️ Bạn đang chọn chính class template (LIP-EL-001). Không cần clone."
+      );
       return;
     }
 
@@ -537,7 +554,10 @@ export default function AdminPage() {
       }
 
       if (hasExisting) {
-        const { error: delErr } = await supabase.from("lessons").delete().eq("class_id", selectedClassId);
+        const { error: delErr } = await supabase
+          .from("lessons")
+          .delete()
+          .eq("class_id", selectedClassId);
         if (delErr) {
           setMsg("❌ Xóa lessons hiện tại của class lỗi: " + delErr.message);
           return;
@@ -552,7 +572,9 @@ export default function AdminPage() {
         slide_updated_at: l.slide_updated_at,
       }));
 
-      const { error: insErr } = await supabase.from("lessons").insert(insertRows);
+      const { error: insErr } = await supabase
+        .from("lessons")
+        .insert(insertRows);
       if (insErr) {
         setMsg("❌ Insert cloned lessons lỗi: " + insErr.message);
         return;
@@ -580,18 +602,39 @@ export default function AdminPage() {
     return (
       <div
         style={{
-          border: "1px solid rgba(255,255,255,0.10)",
-          background: "rgba(255,255,255,0.03)",
-          borderRadius: 12,
+          border: "1px solid var(--border)",
+          background: "rgba(255,255,255,0.82)",
+          boxShadow: "var(--shadow-sm)",
+          borderRadius: 16,
           padding: 12,
         }}
       >
-        <div style={{ fontWeight: 900 }}>{title}</div>
-        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{subtitle}</div>
+        <div style={{ fontWeight: 900, color: "var(--foreground)" }}>{title}</div>
+        <div
+          style={{
+            fontSize: 12,
+            color: "var(--muted-strong)",
+            marginTop: 4,
+          }}
+        >
+          {subtitle}
+        </div>
         <div style={{ marginTop: 12 }}>{children}</div>
       </div>
     );
   }
+
+  const secondaryButtonStyle: React.CSSProperties = {
+    height: 36,
+    padding: "0 12px",
+    borderRadius: 12,
+    border: "1px solid var(--border-strong)",
+    background: "linear-gradient(180deg, #ffffff 0%, #f7faff 100%)",
+    color: "var(--foreground)",
+    cursor: "pointer",
+    fontWeight: 800,
+    boxShadow: "var(--button-secondary-shadow)",
+  };
 
   if (loading) {
     return (
@@ -601,6 +644,9 @@ export default function AdminPage() {
           display: "grid",
           placeItems: "center",
           fontFamily: UI_FONT,
+          color: "var(--foreground)",
+          background:
+            "radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 28%), linear-gradient(180deg, #f4f8fc 0%, var(--background) 22%, #ecf2f8 100%)",
         }}
       >
         Loading admin…
@@ -609,7 +655,16 @@ export default function AdminPage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", fontFamily: UI_FONT, padding: 20, background: "#070707", color: "white" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        fontFamily: UI_FONT,
+        padding: 20,
+        background:
+          "radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 28%), linear-gradient(180deg, #f4f8fc 0%, var(--background) 22%, #ecf2f8 100%)",
+        color: "var(--foreground)",
+      }}
+    >
       {viewOpen ? (
         <div
           onMouseDown={(e) => {
@@ -618,7 +673,7 @@ export default function AdminPage() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.65)",
+            background: "rgba(15, 23, 42, 0.38)",
             display: "grid",
             placeItems: "center",
             padding: 14,
@@ -629,11 +684,11 @@ export default function AdminPage() {
             style={{
               width: "min(1200px, 96vw)",
               height: "min(820px, 92vh)",
-              background: "#0d0d0d",
-              border: "1px solid rgba(255,255,255,0.14)",
-              borderRadius: 14,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 18,
               overflow: "hidden",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
+              boxShadow: "var(--shadow-lg)",
               display: "flex",
               flexDirection: "column",
             }}
@@ -645,61 +700,78 @@ export default function AdminPage() {
                 justifyContent: "space-between",
                 alignItems: "center",
                 gap: 10,
-                borderBottom: "1px solid rgba(255,255,255,0.10)",
-                background: "rgba(255,255,255,0.03)",
+                borderBottom: "1px solid var(--border)",
+                background: "rgba(255,255,255,0.78)",
               }}
             >
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <div
+                  style={{
+                    fontWeight: 900,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    color: "var(--foreground)",
+                  }}
+                >
                   {viewTitle}
                 </div>
-                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>Updated: {viewUpdatedAt ?? "—"}</div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--muted)",
+                    marginTop: 2,
+                  }}
+                >
+                  Updated: {viewUpdatedAt ?? "—"}
+                </div>
               </div>
 
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 {viewUrl ? (
                   <button
-                    onClick={() => window.open(viewUrl, "_blank", "noopener,noreferrer")}
-                    style={{
-                      height: 34,
-                      padding: "0 12px",
-                      borderRadius: 10,
-                      border: "1px solid rgba(255,255,255,0.18)",
-                      background: "rgba(255,255,255,0.06)",
-                      color: "white",
-                      cursor: "pointer",
-                      fontWeight: 800,
-                    }}
+                    onClick={() =>
+                      window.open(viewUrl, "_blank", "noopener,noreferrer")
+                    }
+                    style={secondaryButtonStyle}
                   >
                     Open new tab
                   </button>
                 ) : null}
 
-                <button
-                  onClick={closeViewer}
-                  style={{
-                    height: 34,
-                    padding: "0 12px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.18)",
-                    background: "rgba(255,255,255,0.06)",
-                    color: "white",
-                    cursor: "pointer",
-                    fontWeight: 800,
-                  }}
-                >
+                <button onClick={closeViewer} style={secondaryButtonStyle}>
                   Close
                 </button>
               </div>
             </div>
 
-            <div style={{ flex: 1, position: "relative", background: "#000" }}>
+            <div style={{ flex: 1, position: "relative", background: "#ffffff" }}>
               {viewLoading ? (
-                <div style={{ height: "100%", display: "grid", placeItems: "center", opacity: 0.8 }}>Loading slide…</div>
+                <div
+                  style={{
+                    height: "100%",
+                    display: "grid",
+                    placeItems: "center",
+                    color: "var(--muted-strong)",
+                  }}
+                >
+                  Loading slide…
+                </div>
               ) : viewUrl ? (
-                <iframe title="admin-slide-viewer" src={viewUrl} style={{ width: "100%", height: "100%", border: 0 }} />
+                <iframe
+                  title="admin-slide-viewer"
+                  src={viewUrl}
+                  style={{ width: "100%", height: "100%", border: 0 }}
+                />
               ) : (
-                <div style={{ height: "100%", display: "grid", placeItems: "center", opacity: 0.8 }}>
+                <div
+                  style={{
+                    height: "100%",
+                    display: "grid",
+                    placeItems: "center",
+                    color: "var(--muted-strong)",
+                  }}
+                >
                   Không có URL để hiển thị.
                 </div>
               )}
@@ -711,14 +783,16 @@ export default function AdminPage() {
                     left: 12,
                     bottom: 12,
                     fontSize: 12,
-                    opacity: 0.75,
-                    background: "rgba(0,0,0,0.55)",
-                    border: "1px solid rgba(255,255,255,0.12)",
+                    color: "var(--foreground)",
+                    background: "rgba(255,255,255,0.92)",
+                    border: "1px solid var(--border)",
                     padding: "6px 10px",
                     borderRadius: 10,
+                    boxShadow: "var(--shadow-sm)",
                   }}
                 >
-                  Tip: PDF sẽ xem trực tiếp. PPT/PPTX có thể tải xuống tuỳ trình duyệt.
+                  Tip: PDF sẽ xem trực tiếp. PPT/PPTX có thể tải xuống tuỳ trình
+                  duyệt.
                 </div>
               ) : null}
             </div>
@@ -726,44 +800,44 @@ export default function AdminPage() {
         </div>
       ) : null}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
         <div>
-          <div style={{ fontSize: 22, fontWeight: 900 }}>🛠️ Admin Dashboard</div>
-          <div style={{ opacity: 0.75, marginTop: 4 }}>
-            Quản lý lesson theo dạng accordion. Slide đã save thật, các content bank đang ở bước UI draft.
+          <div
+            style={{
+              fontSize: 24,
+              fontWeight: 900,
+              color: "var(--foreground)",
+            }}
+          >
+            🛠️ Admin Dashboard
+          </div>
+          <div
+            style={{
+              color: "var(--muted-strong)",
+              marginTop: 4,
+            }}
+          >
+            Quản lý lesson theo dạng accordion. Slide đã save thật, các content
+            bank đang ở bước UI draft.
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <button
             onClick={() => router.push("/app")}
-            style={{
-              height: 36,
-              padding: "0 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.18)",
-              background: "rgba(255,255,255,0.06)",
-              color: "white",
-              cursor: "pointer",
-              fontWeight: 800,
-            }}
+            style={secondaryButtonStyle}
           >
             ← App
           </button>
 
-          <button
-            onClick={logout}
-            style={{
-              height: 36,
-              padding: "0 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.18)",
-              background: "rgba(255,255,255,0.06)",
-              color: "white",
-              cursor: "pointer",
-              fontWeight: 800,
-            }}
-          >
+          <button onClick={logout} style={secondaryButtonStyle}>
             Logout
           </button>
         </div>
@@ -774,29 +848,47 @@ export default function AdminPage() {
           style={{
             marginTop: 14,
             padding: 12,
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "rgba(255,255,255,0.06)",
+            borderRadius: 14,
+            border: "1px solid var(--border)",
+            background: "rgba(255,255,255,0.86)",
+            color: "var(--foreground)",
             whiteSpace: "pre-wrap",
+            boxShadow: "var(--shadow-sm)",
           }}
         >
           {msg}
         </div>
       ) : null}
 
-      <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "360px 1fr", gap: 16 }}>
+      <div
+        style={{
+          marginTop: 18,
+          display: "grid",
+          gridTemplateColumns: "360px 1fr",
+          gap: 16,
+        }}
+      >
         <div
           style={{
-            border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 14,
-            background: "rgba(255,255,255,0.03)",
+            border: "1px solid var(--border)",
+            borderRadius: 18,
+            background: "rgba(255,255,255,0.84)",
             padding: 12,
+            boxShadow: "var(--shadow-sm)",
           }}
         >
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>Classes</div>
+          <div
+            style={{
+              fontWeight: 900,
+              marginBottom: 10,
+              color: "var(--foreground)",
+            }}
+          >
+            Classes
+          </div>
 
           {classes.length === 0 ? (
-            <div style={{ opacity: 0.75 }}>Chưa có class nào.</div>
+            <div style={{ color: "var(--muted-strong)" }}>Chưa có class nào.</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
               {classes.map((c) => {
@@ -808,15 +900,28 @@ export default function AdminPage() {
                     style={{
                       textAlign: "left",
                       padding: "10px 10px",
-                      borderRadius: 12,
-                      border: active ? "1px solid rgba(120,170,255,0.5)" : "1px solid rgba(255,255,255,0.12)",
-                      background: active ? "rgba(120,170,255,0.12)" : "rgba(0,0,0,0.25)",
-                      color: "white",
+                      borderRadius: 14,
+                      border: active
+                        ? "1px solid rgba(59,130,246,0.35)"
+                        : "1px solid var(--border)",
+                      background: active
+                        ? "rgba(59,130,246,0.10)"
+                        : "rgba(255,255,255,0.82)",
+                      color: "var(--foreground)",
                       cursor: "pointer",
+                      boxShadow: active ? "var(--shadow-sm)" : "none",
                     }}
                   >
                     <div style={{ fontWeight: 900 }}>{c.name}</div>
-                    <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>{c.id}</div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "var(--muted)",
+                        marginTop: 2,
+                      }}
+                    >
+                      {c.id}
+                    </div>
                   </button>
                 );
               })}
@@ -826,33 +931,55 @@ export default function AdminPage() {
 
         <div
           style={{
-            border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 14,
-            background: "rgba(255,255,255,0.03)",
+            border: "1px solid var(--border)",
+            borderRadius: 18,
+            background: "rgba(255,255,255,0.84)",
             padding: 12,
             minHeight: 240,
+            boxShadow: "var(--shadow-sm)",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "flex-start",
+              flexWrap: "wrap",
+            }}
+          >
             <div>
-              <div style={{ fontWeight: 900 }}>Lessons</div>
-              <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>
-                Class: <span style={{ opacity: 0.95 }}>{selectedClass?.name ?? "—"}</span>
+              <div style={{ fontWeight: 900, color: "var(--foreground)" }}>
+                Lessons
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--muted)",
+                  marginTop: 2,
+                }}
+              >
+                Class:{" "}
+                <span style={{ color: "var(--foreground)" }}>
+                  {selectedClass?.name ?? "—"}
+                </span>
               </div>
 
-              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div
+                style={{
+                  marginTop: 10,
+                  display: "flex",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
                 <button
                   disabled={addingLesson || !selectedClassId}
                   onClick={addLesson}
                   style={{
-                    height: 34,
-                    padding: "0 12px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.18)",
-                    background: "rgba(255,255,255,0.06)",
-                    color: "white",
-                    cursor: addingLesson || !selectedClassId ? "not-allowed" : "pointer",
-                    fontWeight: 900,
+                    ...secondaryButtonStyle,
+                    cursor:
+                      addingLesson || !selectedClassId ? "not-allowed" : "pointer",
                     opacity: addingLesson || !selectedClassId ? 0.55 : 1,
                   }}
                 >
@@ -869,12 +996,7 @@ export default function AdminPage() {
                   }
                   onClick={cloneFromTemplate}
                   style={{
-                    height: 34,
-                    padding: "0 12px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.18)",
-                    background: "rgba(255,255,255,0.06)",
-                    color: "white",
+                    ...secondaryButtonStyle,
                     cursor:
                       cloneBusy ||
                       !templateClass ||
@@ -883,7 +1005,6 @@ export default function AdminPage() {
                       classes.length === 0
                         ? "not-allowed"
                         : "pointer",
-                    fontWeight: 900,
                     opacity:
                       cloneBusy ||
                       !templateClass ||
@@ -894,14 +1015,25 @@ export default function AdminPage() {
                         : 1,
                   }}
                 >
-                  {cloneBusy ? "Cloning…" : `📌 Clone from ${templateClass?.name ?? "LIP-EL-001"} (include slides)`}
+                  {cloneBusy
+                    ? "Cloning…"
+                    : `📌 Clone from ${templateClass?.name ?? "LIP-EL-001"} (include slides)`}
                 </button>
               </div>
 
-              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 12,
+                  color: "var(--muted)",
+                }}
+              >
                 {templateClass ? (
                   <>
-                    Template ID: <span style={{ opacity: 0.95 }}>{templateClass.id}</span>
+                    Template ID:{" "}
+                    <span style={{ color: "var(--foreground)" }}>
+                      {templateClass.id}
+                    </span>
                   </>
                 ) : (
                   <>⚠️ Không tìm thấy class template tên “LIP-EL-001”.</>
@@ -909,14 +1041,16 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div style={{ fontSize: 12, opacity: 0.75 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
               Path format: <code>class_{"<classId>"}/lesson_{"<lessonId>"}.pdf</code>
             </div>
           </div>
 
           <div style={{ marginTop: 14 }}>
             {lessons.length === 0 ? (
-              <div style={{ opacity: 0.75 }}>(Chưa có lesson nào trong class này)</div>
+              <div style={{ color: "var(--muted-strong)" }}>
+                (Chưa có lesson nào trong class này)
+              </div>
             ) : (
               <div style={{ display: "grid", gap: 10 }}>
                 {lessons.map((l) => {
@@ -929,10 +1063,11 @@ export default function AdminPage() {
                     <div
                       key={l.id}
                       style={{
-                        border: "1px solid rgba(255,255,255,0.10)",
-                        background: "rgba(0,0,0,0.25)",
-                        borderRadius: 12,
+                        border: "1px solid var(--border)",
+                        background: "rgba(255,255,255,0.82)",
+                        borderRadius: 16,
                         overflow: "hidden",
+                        boxShadow: "var(--shadow-sm)",
                       }}
                     >
                       <button
@@ -941,7 +1076,7 @@ export default function AdminPage() {
                           width: "100%",
                           textAlign: "left",
                           background: "transparent",
-                          color: "white",
+                          color: "var(--foreground)",
                           border: "none",
                           padding: 14,
                           cursor: "pointer",
@@ -963,59 +1098,29 @@ export default function AdminPage() {
                               gap: 8,
                               flexWrap: "wrap",
                               fontSize: 12,
-                              opacity: 0.88,
                             }}
                           >
-                            <span
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 999,
-                                border: "1px solid rgba(255,255,255,0.12)",
-                                background: "rgba(255,255,255,0.04)",
-                              }}
-                            >
-                              Slide: {hasSlide ? "Uploaded" : "Empty"}
-                            </span>
-                            <span
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 999,
-                                border: "1px solid rgba(255,255,255,0.12)",
-                                background: "rgba(255,255,255,0.04)",
-                              }}
-                            >
-                              Truth: {summary.truthState}
-                            </span>
-                            <span
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 999,
-                                border: "1px solid rgba(255,255,255,0.12)",
-                                background: "rgba(255,255,255,0.04)",
-                              }}
-                            >
-                              Prelearning: {summary.prelearningState}
-                            </span>
-                            <span
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 999,
-                                border: "1px solid rgba(255,255,255,0.12)",
-                                background: "rgba(255,255,255,0.04)",
-                              }}
-                            >
-                              Theory: {summary.theoryState}
-                            </span>
-                            <span
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 999,
-                                border: "1px solid rgba(255,255,255,0.12)",
-                                background: "rgba(255,255,255,0.04)",
-                              }}
-                            >
-                              Practice: {summary.practiceState}
-                            </span>
+                            {[
+                              `Slide: ${hasSlide ? "Uploaded" : "Empty"}`,
+                              `Truth: ${summary.truthState}`,
+                              `Prelearning: ${summary.prelearningState}`,
+                              `Theory: ${summary.theoryState}`,
+                              `Practice: ${summary.practiceState}`,
+                            ].map((text) => (
+                              <span
+                                key={text}
+                                style={{
+                                  padding: "4px 8px",
+                                  borderRadius: 999,
+                                  border: "1px solid var(--border)",
+                                  background: "rgba(233,239,247,0.85)",
+                                  color: "var(--muted-strong)",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {text}
+                              </span>
+                            ))}
                           </div>
                         </div>
 
@@ -1023,13 +1128,16 @@ export default function AdminPage() {
                           style={{
                             minWidth: 44,
                             height: 44,
-                            borderRadius: 10,
+                            borderRadius: 12,
                             display: "grid",
                             placeItems: "center",
-                            border: "1px solid rgba(255,255,255,0.14)",
-                            background: "rgba(255,255,255,0.04)",
+                            border: "1px solid var(--border)",
+                            background:
+                              "linear-gradient(180deg, #ffffff 0%, #f7faff 100%)",
                             fontSize: 22,
                             fontWeight: 900,
+                            color: "var(--foreground)",
+                            boxShadow: "var(--button-secondary-shadow)",
                           }}
                         >
                           {expanded ? "▾" : "▸"}
@@ -1039,10 +1147,11 @@ export default function AdminPage() {
                       {expanded ? (
                         <div
                           style={{
-                            borderTop: "1px solid rgba(255,255,255,0.08)",
+                            borderTop: "1px solid var(--border)",
                             padding: 14,
                             display: "grid",
                             gap: 12,
+                            background: "rgba(248,251,255,0.72)",
                           }}
                         >
                           {sectionCard(
@@ -1056,26 +1165,44 @@ export default function AdminPage() {
                               }}
                             >
                               <div>
-                                <div style={{ fontSize: 12, opacity: 0.75 }}>
-                                  slide_path: <span style={{ opacity: 0.95 }}>{l.slide_path ?? "—"}</span>
+                                <div
+                                  style={{
+                                    fontSize: 12,
+                                    color: "var(--muted)",
+                                  }}
+                                >
+                                  slide_path:{" "}
+                                  <span style={{ color: "var(--foreground)" }}>
+                                    {l.slide_path ?? "—"}
+                                  </span>
                                 </div>
-                                <div style={{ fontSize: 12, opacity: 0.65, marginTop: 2 }}>
-                                  updated_at: <span style={{ opacity: 0.9 }}>{l.slide_updated_at ?? "—"}</span>
+                                <div
+                                  style={{
+                                    fontSize: 12,
+                                    color: "var(--muted)",
+                                    marginTop: 2,
+                                  }}
+                                >
+                                  updated_at:{" "}
+                                  <span style={{ color: "var(--foreground)" }}>
+                                    {l.slide_updated_at ?? "—"}
+                                  </span>
                                 </div>
 
-                                <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                <div
+                                  style={{
+                                    marginTop: 10,
+                                    display: "flex",
+                                    gap: 10,
+                                    flexWrap: "wrap",
+                                  }}
+                                >
                                   <button
                                     disabled={!hasSlide}
                                     onClick={() => openSlideViewer(l)}
                                     style={{
-                                      height: 34,
-                                      padding: "0 12px",
-                                      borderRadius: 10,
-                                      border: "1px solid rgba(255,255,255,0.18)",
-                                      background: hasSlide ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
-                                      color: "white",
+                                      ...secondaryButtonStyle,
                                       cursor: hasSlide ? "pointer" : "not-allowed",
-                                      fontWeight: 900,
                                       opacity: hasSlide ? 1 : 0.55,
                                     }}
                                   >
@@ -1086,14 +1213,8 @@ export default function AdminPage() {
                                     disabled={!hasSlide}
                                     onClick={() => openSlideNewTab(l)}
                                     style={{
-                                      height: 34,
-                                      padding: "0 12px",
-                                      borderRadius: 10,
-                                      border: "1px solid rgba(255,255,255,0.18)",
-                                      background: hasSlide ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
-                                      color: "white",
+                                      ...secondaryButtonStyle,
                                       cursor: hasSlide ? "pointer" : "not-allowed",
-                                      fontWeight: 900,
                                       opacity: hasSlide ? 1 : 0.55,
                                     }}
                                   >
@@ -1102,22 +1223,41 @@ export default function AdminPage() {
                                 </div>
                               </div>
 
-                              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: 8,
+                                }}
+                              >
                                 <label
                                   style={{
                                     display: "block",
-                                    border: "1px dashed rgba(255,255,255,0.18)",
-                                    borderRadius: 12,
+                                    border: "1px dashed var(--border-strong)",
+                                    borderRadius: 14,
                                     padding: 10,
                                     cursor: busy ? "not-allowed" : "pointer",
                                     opacity: busy ? 0.6 : 1,
-                                    background: "rgba(255,255,255,0.03)",
+                                    background: "rgba(255,255,255,0.86)",
                                   }}
                                 >
-                                  <div style={{ fontWeight: 800, marginBottom: 4 }}>
+                                  <div
+                                    style={{
+                                      fontWeight: 800,
+                                      marginBottom: 4,
+                                      color: "var(--foreground)",
+                                    }}
+                                  >
                                     {l.slide_path ? "Replace slide" : "Upload slide"}
                                   </div>
-                                  <div style={{ fontSize: 12, opacity: 0.75 }}>Chọn file PDF (khuyến nghị)</div>
+                                  <div
+                                    style={{
+                                      fontSize: 12,
+                                      color: "var(--muted)",
+                                    }}
+                                  >
+                                    Chọn file PDF (khuyến nghị)
+                                  </div>
                                   <input
                                     type="file"
                                     accept=".pdf,.ppt,.pptx,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -1132,10 +1272,16 @@ export default function AdminPage() {
                                   />
                                 </label>
 
-                                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                                <div
+                                  style={{
+                                    fontSize: 12,
+                                    color: "var(--muted)",
+                                  }}
+                                >
                                   Bucket: <b>slides</b>
                                   <br />
-                                  Target: <code>{`class_${selectedClassId}/lesson_${l.id}.pdf`}</code>
+                                  Target:{" "}
+                                  <code>{`class_${selectedClassId}/lesson_${l.id}.pdf`}</code>
                                 </div>
                               </div>
                             </div>
@@ -1147,40 +1293,50 @@ export default function AdminPage() {
                             <div>
                               <textarea
                                 value={getDraft(l.id).truthSource}
-                                onChange={(e) => updateLessonDraft(l.id, "truthSource", e.target.value)}
+                                onChange={(e) =>
+                                  updateLessonDraft(
+                                    l.id,
+                                    "truthSource",
+                                    e.target.value
+                                  )
+                                }
                                 placeholder="Paste truth source / lesson notes here..."
                                 style={{
                                   width: "100%",
                                   minHeight: 150,
                                   resize: "vertical",
-                                  borderRadius: 12,
-                                  border: "1px solid rgba(255,255,255,0.12)",
-                                  background: "rgba(0,0,0,0.24)",
-                                  color: "white",
+                                  borderRadius: 14,
+                                  border: "1px solid var(--border)",
+                                  background: "rgba(255,255,255,0.94)",
+                                  color: "var(--foreground)",
                                   padding: 12,
                                   fontFamily: UI_FONT,
                                   lineHeight: 1.5,
                                 }}
                               />
 
-                              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                              <div
+                                style={{
+                                  marginTop: 10,
+                                  display: "flex",
+                                  gap: 10,
+                                  alignItems: "center",
+                                  flexWrap: "wrap",
+                                }}
+                              >
                                 <button
                                   onClick={() => saveSectionDraft(l, "truthSource")}
-                                  style={{
-                                    height: 34,
-                                    padding: "0 12px",
-                                    borderRadius: 10,
-                                    border: "1px solid rgba(255,255,255,0.18)",
-                                    background: "rgba(255,255,255,0.06)",
-                                    color: "white",
-                                    cursor: "pointer",
-                                    fontWeight: 900,
-                                  }}
+                                  style={secondaryButtonStyle}
                                 >
                                   Save Truth Source
                                 </button>
 
-                                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                                <div
+                                  style={{
+                                    fontSize: 12,
+                                    color: "var(--muted)",
+                                  }}
+                                >
                                   Draft only ở bản này.
                                 </div>
                               </div>
@@ -1193,24 +1349,38 @@ export default function AdminPage() {
                             <div>
                               <textarea
                                 value={getDraft(l.id).prelearningJson}
-                                onChange={(e) => updateLessonDraft(l.id, "prelearningJson", e.target.value)}
+                                onChange={(e) =>
+                                  updateLessonDraft(
+                                    l.id,
+                                    "prelearningJson",
+                                    e.target.value
+                                  )
+                                }
                                 placeholder={`[\n  {\n    "question_text": "Choose the correct answer",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0\n  }\n]`}
                                 style={{
                                   width: "100%",
                                   minHeight: 180,
                                   resize: "vertical",
-                                  borderRadius: 12,
-                                  border: "1px solid rgba(255,255,255,0.12)",
-                                  background: "rgba(0,0,0,0.24)",
-                                  color: "white",
+                                  borderRadius: 14,
+                                  border: "1px solid var(--border)",
+                                  background: "rgba(255,255,255,0.94)",
+                                  color: "var(--foreground)",
                                   padding: 12,
-                                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                                  fontFamily:
+                                    'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                                   lineHeight: 1.5,
                                   fontSize: 13,
                                 }}
                               />
 
-                              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75, lineHeight: 1.6 }}>
+                              <div
+                                style={{
+                                  marginTop: 10,
+                                  fontSize: 12,
+                                  color: "var(--muted)",
+                                  lineHeight: 1.6,
+                                }}
+                              >
                                 - Paste a JSON array
                                 <br />
                                 - Each item = 1 question
@@ -1220,37 +1390,32 @@ export default function AdminPage() {
                                 - answer_index must be 0–3
                               </div>
 
-                              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                              <div
+                                style={{
+                                  marginTop: 10,
+                                  display: "flex",
+                                  gap: 10,
+                                  alignItems: "center",
+                                  flexWrap: "wrap",
+                                }}
+                              >
                                 <button
                                   onClick={() =>
-                                    validateJsonArray(getDraft(l.id).prelearningJson, `${l.title} — Prelearning Quiz`)
+                                    validateJsonArray(
+                                      getDraft(l.id).prelearningJson,
+                                      `${l.title} — Prelearning Quiz`
+                                    )
                                   }
-                                  style={{
-                                    height: 34,
-                                    padding: "0 12px",
-                                    borderRadius: 10,
-                                    border: "1px solid rgba(255,255,255,0.18)",
-                                    background: "rgba(255,255,255,0.06)",
-                                    color: "white",
-                                    cursor: "pointer",
-                                    fontWeight: 900,
-                                  }}
+                                  style={secondaryButtonStyle}
                                 >
                                   Validate JSON
                                 </button>
 
                                 <button
-                                  onClick={() => saveSectionDraft(l, "prelearningJson")}
-                                  style={{
-                                    height: 34,
-                                    padding: "0 12px",
-                                    borderRadius: 10,
-                                    border: "1px solid rgba(255,255,255,0.18)",
-                                    background: "rgba(255,255,255,0.06)",
-                                    color: "white",
-                                    cursor: "pointer",
-                                    fontWeight: 900,
-                                  }}
+                                  onClick={() =>
+                                    saveSectionDraft(l, "prelearningJson")
+                                  }
+                                  style={secondaryButtonStyle}
                                 >
                                   Save Prelearning
                                 </button>
@@ -1264,54 +1429,50 @@ export default function AdminPage() {
                             <div>
                               <textarea
                                 value={getDraft(l.id).theoryJson}
-                                onChange={(e) => updateLessonDraft(l.id, "theoryJson", e.target.value)}
+                                onChange={(e) =>
+                                  updateLessonDraft(l.id, "theoryJson", e.target.value)
+                                }
                                 placeholder={`[\n  {\n    "question_text": "Theory question...",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0\n  }\n]`}
                                 style={{
                                   width: "100%",
                                   minHeight: 180,
                                   resize: "vertical",
-                                  borderRadius: 12,
-                                  border: "1px solid rgba(255,255,255,0.12)",
-                                  background: "rgba(0,0,0,0.24)",
-                                  color: "white",
+                                  borderRadius: 14,
+                                  border: "1px solid var(--border)",
+                                  background: "rgba(255,255,255,0.94)",
+                                  color: "var(--foreground)",
                                   padding: 12,
-                                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                                  fontFamily:
+                                    'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                                   lineHeight: 1.5,
                                   fontSize: 13,
                                 }}
                               />
 
-                              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                              <div
+                                style={{
+                                  marginTop: 10,
+                                  display: "flex",
+                                  gap: 10,
+                                  alignItems: "center",
+                                  flexWrap: "wrap",
+                                }}
+                              >
                                 <button
                                   onClick={() =>
-                                    validateJsonArray(getDraft(l.id).theoryJson, `${l.title} — Theory Questions`)
+                                    validateJsonArray(
+                                      getDraft(l.id).theoryJson,
+                                      `${l.title} — Theory Questions`
+                                    )
                                   }
-                                  style={{
-                                    height: 34,
-                                    padding: "0 12px",
-                                    borderRadius: 10,
-                                    border: "1px solid rgba(255,255,255,0.18)",
-                                    background: "rgba(255,255,255,0.06)",
-                                    color: "white",
-                                    cursor: "pointer",
-                                    fontWeight: 900,
-                                  }}
+                                  style={secondaryButtonStyle}
                                 >
                                   Validate JSON
                                 </button>
 
                                 <button
                                   onClick={() => saveSectionDraft(l, "theoryJson")}
-                                  style={{
-                                    height: 34,
-                                    padding: "0 12px",
-                                    borderRadius: 10,
-                                    border: "1px solid rgba(255,255,255,0.18)",
-                                    background: "rgba(255,255,255,0.06)",
-                                    color: "white",
-                                    cursor: "pointer",
-                                    fontWeight: 900,
-                                  }}
+                                  style={secondaryButtonStyle}
                                 >
                                   Save Theory
                                 </button>
@@ -1325,54 +1486,56 @@ export default function AdminPage() {
                             <div>
                               <textarea
                                 value={getDraft(l.id).practiceJson}
-                                onChange={(e) => updateLessonDraft(l.id, "practiceJson", e.target.value)}
+                                onChange={(e) =>
+                                  updateLessonDraft(
+                                    l.id,
+                                    "practiceJson",
+                                    e.target.value
+                                  )
+                                }
                                 placeholder={`[\n  {\n    "question_text": "Practice question...",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0\n  }\n]`}
                                 style={{
                                   width: "100%",
                                   minHeight: 180,
                                   resize: "vertical",
-                                  borderRadius: 12,
-                                  border: "1px solid rgba(255,255,255,0.12)",
-                                  background: "rgba(0,0,0,0.24)",
-                                  color: "white",
+                                  borderRadius: 14,
+                                  border: "1px solid var(--border)",
+                                  background: "rgba(255,255,255,0.94)",
+                                  color: "var(--foreground)",
                                   padding: 12,
-                                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                                  fontFamily:
+                                    'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                                   lineHeight: 1.5,
                                   fontSize: 13,
                                 }}
                               />
 
-                              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                              <div
+                                style={{
+                                  marginTop: 10,
+                                  display: "flex",
+                                  gap: 10,
+                                  alignItems: "center",
+                                  flexWrap: "wrap",
+                                }}
+                              >
                                 <button
                                   onClick={() =>
-                                    validateJsonArray(getDraft(l.id).practiceJson, `${l.title} — Practice Questions`)
+                                    validateJsonArray(
+                                      getDraft(l.id).practiceJson,
+                                      `${l.title} — Practice Questions`
+                                    )
                                   }
-                                  style={{
-                                    height: 34,
-                                    padding: "0 12px",
-                                    borderRadius: 10,
-                                    border: "1px solid rgba(255,255,255,0.18)",
-                                    background: "rgba(255,255,255,0.06)",
-                                    color: "white",
-                                    cursor: "pointer",
-                                    fontWeight: 900,
-                                  }}
+                                  style={secondaryButtonStyle}
                                 >
                                   Validate JSON
                                 </button>
 
                                 <button
-                                  onClick={() => saveSectionDraft(l, "practiceJson")}
-                                  style={{
-                                    height: 34,
-                                    padding: "0 12px",
-                                    borderRadius: 10,
-                                    border: "1px solid rgba(255,255,255,0.18)",
-                                    background: "rgba(255,255,255,0.06)",
-                                    color: "white",
-                                    cursor: "pointer",
-                                    fontWeight: 900,
-                                  }}
+                                  onClick={() =>
+                                    saveSectionDraft(l, "practiceJson")
+                                  }
+                                  style={secondaryButtonStyle}
                                 >
                                   Save Practice
                                 </button>
@@ -1390,12 +1553,22 @@ export default function AdminPage() {
         </div>
       </div>
 
-      <div style={{ marginTop: 18, fontSize: 12, opacity: 0.7, lineHeight: 1.6 }}>
-        Lưu ý: Nếu bạn đang dùng Storage policy “tutor-only write”, admin sẽ bị chặn upload.
+      <div
+        style={{
+          marginTop: 18,
+          fontSize: 12,
+          color: "var(--muted)",
+          lineHeight: 1.6,
+        }}
+      >
+        Lưu ý: Nếu bạn đang dùng Storage policy “tutor-only write”, admin sẽ bị
+        chặn upload.
         <br />
-        Nếu upload báo permission denied, bạn cần sửa policy WRITE để cho phép role=admin.
+        Nếu upload báo permission denied, bạn cần sửa policy WRITE để cho phép
+        role=admin.
         <br />
-        Các phần Truth / Prelearning / Theory / Practice hiện mới là UI draft để chốt workflow.
+        Các phần Truth / Prelearning / Theory / Practice hiện mới là UI draft để
+        chốt workflow.
       </div>
     </div>
   );
