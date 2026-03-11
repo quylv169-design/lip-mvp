@@ -81,7 +81,9 @@ function readinessCopy(score10: number) {
   };
 }
 
-function studentWeakPointFromSkill(skill?: string): { title: string; tip: string; example?: string } {
+function studentWeakPointFromSkill(
+  skill?: string
+): { title: string; tip: string; example?: string } {
   const s = (skill ?? "").toLowerCase();
 
   if (s.includes("present_simple_base") || s.includes("presentsimplebase")) {
@@ -96,7 +98,8 @@ function studentWeakPointFromSkill(skill?: string): { title: string; tip: string
     return {
       title: "Quên thêm -s / -es với “He / She / It”",
       tip: "Với He/She/It: động từ thường thêm -s hoặc -es.",
-      example: "Gợi ý -es: kết thúc bằng s/sh/ch/x/o → thêm -es (go→goes). Ví dụ: She plays / He goes.",
+      example:
+        "Gợi ý -es: kết thúc bằng s/sh/ch/x/o → thêm -es (go→goes). Ví dụ: She plays / He goes.",
     };
   }
 
@@ -108,7 +111,10 @@ function studentWeakPointFromSkill(skill?: string): { title: string; tip: string
     };
   }
 
-  if (s.includes("question_do_does") || (s.includes("question") && (s.includes("do") || s.includes("does")))) {
+  if (
+    s.includes("question_do_does") ||
+    (s.includes("question") && (s.includes("do") || s.includes("does")))
+  ) {
     return {
       title: "Nhầm Do và Does khi hỏi",
       tip: "You/We/They/I → Do. He/She/It → Does.",
@@ -116,7 +122,10 @@ function studentWeakPointFromSkill(skill?: string): { title: string; tip: string
     };
   }
 
-  if (s.includes("negation_does_not") || (s.includes("negation") && s.includes("does"))) {
+  if (
+    s.includes("negation_does_not") ||
+    (s.includes("negation") && s.includes("does"))
+  ) {
     return {
       title: "Nhầm khi dùng “does not”",
       tip: "Sau “does not” dùng động từ bình thường (không thêm -s/-es).",
@@ -140,7 +149,8 @@ function studentWeakPointFromSkill(skill?: string): { title: string; tip: string
 
 function makeSeed() {
   try {
-    if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto)
+      return crypto.randomUUID();
   } catch {}
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -202,6 +212,16 @@ function findTruthForLesson(lesson: LessonRow | null) {
   return null;
 }
 
+function rubricToText(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  try {
+    return JSON.stringify(value, null, 2).trim();
+  } catch {
+    return String(value).trim();
+  }
+}
+
 export default function PrelearningWizardPage() {
   const router = useRouter();
   const params = useParams<{ lessonId: string }>();
@@ -213,6 +233,7 @@ export default function PrelearningWizardPage() {
   const [lessonErr, setLessonErr] = useState<string>("");
 
   const [dbRequiredNotes, setDbRequiredNotes] = useState<string>("");
+  const [dbRubric, setDbRubric] = useState<string>("");
   const [truthDbLoaded, setTruthDbLoaded] = useState(false);
 
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
@@ -233,7 +254,9 @@ export default function PrelearningWizardPage() {
   const abortRef = useRef<AbortController | null>(null);
 
   const [questions, setQuestions] = useState<string[]>(["", "", ""]);
-  const [questionsEval, setQuestionsEval] = useState<QuestionsEval | null>(null);
+  const [questionsEval, setQuestionsEval] = useState<QuestionsEval | null>(
+    null
+  );
   const [questionsLoading, setQuestionsLoading] = useState(false);
   const [questionsErr, setQuestionsErr] = useState<string>("");
 
@@ -278,16 +301,18 @@ export default function PrelearningWizardPage() {
 
       setTruthDbLoaded(false);
       setDbRequiredNotes("");
+      setDbRubric("");
 
       const { data, error } = await supabase
         .from("lesson_truth")
-        .select("lesson_id, required_notes")
+        .select("lesson_id, required_notes, rubric")
         .eq("lesson_id", lessonId)
         .maybeSingle();
 
       if (!error && data) {
         const row = data as LessonTruthRow;
         setDbRequiredNotes((row.required_notes ?? "").trim());
+        setDbRubric(rubricToText(row.rubric));
       }
 
       setTruthDbLoaded(true);
@@ -302,10 +327,21 @@ export default function PrelearningWizardPage() {
     return raw.trim();
   }, [truth]);
 
+  const fallbackRubricText: string = useMemo(() => {
+    const raw = (truth as any)?.scoringRubric;
+    if (typeof raw !== "string") return "";
+    return raw.trim();
+  }, [truth]);
+
   const checklistText: string = useMemo(() => {
     if (dbRequiredNotes.trim()) return dbRequiredNotes.trim();
     return fallbackChecklistText;
   }, [dbRequiredNotes, fallbackChecklistText]);
+
+  const rubricText: string = useMemo(() => {
+    if (dbRubric.trim()) return dbRubric.trim();
+    return fallbackRubricText;
+  }, [dbRubric, fallbackRubricText]);
 
   const quizTotal = quiz?.questions?.length ?? 0;
 
@@ -325,7 +361,10 @@ export default function PrelearningWizardPage() {
 
   const computedNotebookScore6 = useMemo(() => {
     if (!notebookEval) return 0;
-    return round1(clamp(notebookEval.content_score, 0, 4) + clamp(notebookEval.presentation_score, 0, 2));
+    return round1(
+      clamp(notebookEval.content_score, 0, 4) +
+        clamp(notebookEval.presentation_score, 0, 2)
+    );
   }, [notebookEval]);
 
   const computedQuestionsScore2 = useMemo(() => {
@@ -334,19 +373,33 @@ export default function PrelearningWizardPage() {
   }, [questionsEval]);
 
   const computedTotal10 = useMemo(() => {
-    const total = computedNotebookScore6 + computedQuizScore2 + computedQuestionsScore2;
+    const total =
+      computedNotebookScore6 + computedQuizScore2 + computedQuestionsScore2;
     return round1(clamp(total, 0, 10));
-  }, [computedNotebookScore6, computedQuizScore2, computedQuestionsScore2]);
+  }, [
+    computedNotebookScore6,
+    computedQuizScore2,
+    computedQuestionsScore2,
+  ]);
 
-  const readiness = useMemo(() => readinessCopy(computedTotal10), [computedTotal10]);
+  const readiness = useMemo(
+    () => readinessCopy(computedTotal10),
+    [computedTotal10]
+  );
 
   const wrongQuizItems = useMemo(() => {
     if (!quiz?.questions?.length) return [];
-    const out: Array<{ idx: number; q: QuizQ; selected: number; correct: number }> = [];
+    const out: Array<{
+      idx: number;
+      q: QuizQ;
+      selected: number;
+      correct: number;
+    }> = [];
     quiz.questions.forEach((q, idx) => {
       const selected = quizAnswers[idx];
       const correct = q.answerIndex;
-      if (selected !== -1 && selected !== correct) out.push({ idx, q, selected, correct });
+      if (selected !== -1 && selected !== correct)
+        out.push({ idx, q, selected, correct });
     });
     return out;
   }, [quiz, quizAnswers]);
@@ -360,7 +413,12 @@ export default function PrelearningWizardPage() {
 
     const arr = Array.from(map.values()).sort((a, b) => b.count - a.count);
 
-    const out: Array<{ title: string; tip: string; example?: string; count: number }> = [];
+    const out: Array<{
+      title: string;
+      tip: string;
+      example?: string;
+      count: number;
+    }> = [];
     const seenTitle = new Set<string>();
 
     for (const it of arr) {
@@ -423,8 +481,12 @@ export default function PrelearningWizardPage() {
       fd.append("lessonTitle", lesson.title);
       fd.append("lessonId", lesson.id);
       fd.append("requiredNotes", checklistText || "");
+      fd.append("rubric", rubricText || "");
 
-      const res = await fetch("/api/prelearning/evaluate-notebook", { method: "POST", body: fd });
+      const res = await fetch("/api/prelearning/evaluate-notebook", {
+        method: "POST",
+        body: fd,
+      });
 
       const raw = await res.text();
       let data: any;
@@ -435,7 +497,11 @@ export default function PrelearningWizardPage() {
       }
 
       if (!res.ok) {
-        setNotebookErr(data?.error ? `${data.error}${data.detail ? " — " + data.detail : ""}` : "Evaluate failed");
+        setNotebookErr(
+          data?.error
+            ? `${data.error}${data.detail ? " — " + data.detail : ""}`
+            : "Evaluate failed"
+        );
         setNotebookLoading(false);
         return;
       }
@@ -566,7 +632,9 @@ export default function PrelearningWizardPage() {
         questions_score: Number(data.questions_score ?? 0),
         feedback: Array.isArray(data.feedback) ? data.feedback : undefined,
         notes: Array.isArray(data.notes) ? data.notes : undefined,
-        rewrite_suggestions: Array.isArray(data.rewrite_suggestions) ? data.rewrite_suggestions : undefined,
+        rewrite_suggestions: Array.isArray(data.rewrite_suggestions)
+          ? data.rewrite_suggestions
+          : undefined,
       };
 
       setQuestionsEval(out);
@@ -623,7 +691,10 @@ export default function PrelearningWizardPage() {
 
         const { error: upErr } = await supabase.storage
           .from("prelearning-notebooks")
-          .upload(path, f, { upsert: false, contentType: f.type || "image/jpeg" });
+          .upload(path, f, {
+            upsert: false,
+            contentType: f.type || "image/jpeg",
+          });
 
         if (upErr) {
           setSubmitErr(`Upload ảnh vở thất bại: ${upErr.message}`);
@@ -644,7 +715,9 @@ export default function PrelearningWizardPage() {
         notebook_image_hashes,
 
         notebook_content_score: round1(clamp(notebookEval.content_score, 0, 4)),
-        notebook_presentation_score: round1(clamp(notebookEval.presentation_score, 0, 2)),
+        notebook_presentation_score: round1(
+          clamp(notebookEval.presentation_score, 0, 2)
+        ),
         quiz_score: computedQuizScore2,
         questions_score: round1(clamp(questionsEval.questions_score, 0, 2)),
 
@@ -657,7 +730,8 @@ export default function PrelearningWizardPage() {
 
         ai_feedback: {
           notebook_feedback: notebookEval.feedback,
-          questions_feedback: questionsEval.feedback ?? questionsEval.notes ?? [],
+          questions_feedback:
+            questionsEval.feedback ?? questionsEval.notes ?? [],
           rewrite_suggestions: questionsEval.rewrite_suggestions ?? [],
         },
       };
@@ -673,7 +747,11 @@ export default function PrelearningWizardPage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setSubmitErr(data?.error ? `${data.error}${data.detail ? " — " + data.detail : ""}` : "Submit failed");
+        setSubmitErr(
+          data?.error
+            ? `${data.error}${data.detail ? " — " + data.detail : ""}`
+            : "Submit failed"
+        );
         return;
       }
 
@@ -730,10 +808,13 @@ export default function PrelearningWizardPage() {
     notebookImages.length === 0
       ? "Chưa chọn ảnh"
       : notebookImages.length === 1
-      ? `${notebookImages[0].name} (${Math.round(notebookImages[0].size / 1024)} KB)`
+      ? `${notebookImages[0].name} (${Math.round(
+          notebookImages[0].size / 1024
+        )} KB)`
       : `${notebookImages.length} ảnh (ví dụ: ${notebookImages[0].name})`;
 
-  const canGoToQuestions = !!quiz && quizAnswers.length > 0 && !quizAnswers.some((a) => a === -1);
+  const canGoToQuestions =
+    !!quiz && quizAnswers.length > 0 && !quizAnswers.some((a) => a === -1);
 
   function getChoiceTextSingle(q: QuizQ, ci: number) {
     const arr = Array.isArray(q.choices_en) ? q.choices_en : [];
@@ -745,7 +826,8 @@ export default function PrelearningWizardPage() {
   }
 
   function explainForWrong(q: QuizQ): string {
-    const direct = (q.explain_vi ?? "").trim() || (q.common_mistake_vi ?? "").trim();
+    const direct =
+      (q.explain_vi ?? "").trim() || (q.common_mistake_vi ?? "").trim();
     if (direct) return direct;
 
     const w = studentWeakPointFromSkill(q.skill_tag);
@@ -763,16 +845,34 @@ export default function PrelearningWizardPage() {
       }}
     >
       <div style={{ maxWidth: 980, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "center",
+          }}
+        >
           <div>
             <div style={{ fontSize: 22, fontWeight: 900 }}>Pre-learning</div>
-            <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 14 }}>
-              Lesson L{lesson.order_index}: <b style={{ color: "var(--text-primary)" }}>{lesson.title}</b>
+            <div
+              style={{
+                marginTop: 6,
+                color: "var(--text-muted)",
+                fontSize: 14,
+              }}
+            >
+              Lesson L{lesson.order_index}:{" "}
+              <b style={{ color: "var(--text-primary)" }}>{lesson.title}</b>
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10 }}>
-            <button type="button" onClick={() => router.back()} style={btnGhost}>
+            <button
+              type="button"
+              onClick={() => router.back()}
+              style={btnGhost}
+            >
               ← Back
             </button>
             <button type="button" onClick={resetAll} style={btnGhost}>
@@ -782,28 +882,62 @@ export default function PrelearningWizardPage() {
         </div>
 
         <div style={{ marginTop: 14, ...cardStyle }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ fontWeight: 900, color: "var(--text-muted)" }}>Progress</div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ fontWeight: 900, color: "var(--text-muted)" }}>
+              Progress
+            </div>
             <div style={{ color: "var(--text-muted)", fontSize: 14 }}>
-              Step {step}/4 • Total: <b style={{ color: "var(--text-primary)" }}>{computedTotal10}/10</b>
+              Step {step}/4 • Total:{" "}
+              <b style={{ color: "var(--text-primary)" }}>{computedTotal10}/10</b>
             </div>
           </div>
 
-          <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+          <div
+            style={{
+              marginTop: 10,
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: 10,
+            }}
+          >
             <div style={{ ...cardSoft }}>
-              <div style={{ fontWeight: 900, fontSize: 14 }}>📄 Notebook (0–6)</div>
-              <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 14, lineHeight: 1.6 }}>
+              <div style={{ fontWeight: 900, fontSize: 14 }}>
+                📄 Notebook (0–6)
+              </div>
+              <div
+                style={{
+                  marginTop: 8,
+                  color: "var(--text-muted)",
+                  fontSize: 14,
+                  lineHeight: 1.6,
+                }}
+              >
                 {notebookEval ? (
                   <>
                     <div>
-                      Content: <b style={{ color: "var(--text-primary)" }}>{round1(notebookEval.content_score)}/4</b>
+                      Content:{" "}
+                      <b style={{ color: "var(--text-primary)" }}>
+                        {round1(notebookEval.content_score)}/4
+                      </b>
                     </div>
                     <div>
                       Presentation:{" "}
-                      <b style={{ color: "var(--text-primary)" }}>{round1(notebookEval.presentation_score)}/2</b>
+                      <b style={{ color: "var(--text-primary)" }}>
+                        {round1(notebookEval.presentation_score)}/2
+                      </b>
                     </div>
                     <div style={{ marginTop: 6 }}>
-                      Subtotal: <b style={{ color: "var(--text-primary)" }}>{computedNotebookScore6}/6</b>
+                      Subtotal:{" "}
+                      <b style={{ color: "var(--text-primary)" }}>
+                        {computedNotebookScore6}/6
+                      </b>
                     </div>
                   </>
                 ) : (
@@ -814,7 +948,14 @@ export default function PrelearningWizardPage() {
 
             <div style={{ ...cardSoft }}>
               <div style={{ fontWeight: 900, fontSize: 14 }}>🧩 Quiz (0–2)</div>
-              <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 14, lineHeight: 1.6 }}>
+              <div
+                style={{
+                  marginTop: 8,
+                  color: "var(--text-muted)",
+                  fontSize: 14,
+                  lineHeight: 1.6,
+                }}
+              >
                 {quiz ? (
                   <>
                     <div>
@@ -824,7 +965,10 @@ export default function PrelearningWizardPage() {
                       </b>
                     </div>
                     <div style={{ marginTop: 6 }}>
-                      Score: <b style={{ color: "var(--text-primary)" }}>{computedQuizScore2}/2</b>
+                      Score:{" "}
+                      <b style={{ color: "var(--text-primary)" }}>
+                        {computedQuizScore2}/2
+                      </b>
                     </div>
                   </>
                 ) : quizLoading ? (
@@ -836,15 +980,35 @@ export default function PrelearningWizardPage() {
             </div>
 
             <div style={{ ...cardSoft }}>
-              <div style={{ fontWeight: 900, fontSize: 14 }}>❓ Questions (0–2)</div>
-              <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 14, lineHeight: 1.6 }}>
+              <div style={{ fontWeight: 900, fontSize: 14 }}>
+                ❓ Questions (0–2)
+              </div>
+              <div
+                style={{
+                  marginTop: 8,
+                  color: "var(--text-muted)",
+                  fontSize: 14,
+                  lineHeight: 1.6,
+                }}
+              >
                 {questionsEval ? (
                   <>
                     <div>
-                      Score: <b style={{ color: "var(--text-primary)" }}>{computedQuestionsScore2}/2</b>
+                      Score:{" "}
+                      <b style={{ color: "var(--text-primary)" }}>
+                        {computedQuestionsScore2}/2
+                      </b>
                     </div>
-                    <div style={{ marginTop: 6, fontSize: 13, color: "var(--text-muted)" }}>
-                      {questionsEval.feedback?.[0] ?? questionsEval.notes?.[0] ?? "OK"}
+                    <div
+                      style={{
+                        marginTop: 6,
+                        fontSize: 13,
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      {questionsEval.feedback?.[0] ??
+                        questionsEval.notes?.[0] ??
+                        "OK"}
                     </div>
                   </>
                 ) : (
@@ -855,25 +1019,56 @@ export default function PrelearningWizardPage() {
           </div>
         </div>
 
-        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 14 }}>
+        <div
+          style={{
+            marginTop: 14,
+            display: "grid",
+            gridTemplateColumns: "1.1fr 0.9fr",
+            gap: 14,
+          }}
+        >
           <div style={cardStyle}>
             {step === 1 && (
               <>
-                <div style={{ fontSize: 16, fontWeight: 900 }}>Step 1 — Upload ảnh vở (JPEG/PNG)</div>
-                <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 14, lineHeight: 1.7 }}>
-                  Dùng CamScanner/ScanCam export <b>JPG/PNG</b> (không cần PDF). Hệ thống chấm theo 2 tiêu chí:
+                <div style={{ fontSize: 16, fontWeight: 900 }}>
+                  Step 1 — Upload ảnh vở (JPEG/PNG)
+                </div>
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: "var(--text-muted)",
+                    fontSize: 14,
+                    lineHeight: 1.7,
+                  }}
+                >
+                  Dùng CamScanner/ScanCam export <b>JPG/PNG</b> (không cần PDF).
+                  Hệ thống chấm theo 2 tiêu chí:
                   <ul style={{ marginTop: 8, paddingLeft: 18 }}>
-                    <li>Đủ nội dung trọng tâm theo slide/tutor (0–4)</li>
-                    <li>Trình bày, chữ viết nghiêm túc/dễ nhìn (0–2)</li>
+                    <li>Đủ nội dung trọng tâm theo checklist lesson (0–4)</li>
+                    <li>Trình bày, chữ viết nghiêm túc/dễ nhìn theo rubric (0–2)</li>
                   </ul>
-                  <div style={{ marginTop: 8, color: "var(--text-faint)" }}>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      color: "var(--text-faint)",
+                    }}
+                  >
                     Bạn có thể upload <b>nhiều ảnh</b> (nhiều trang vở) nếu cần.
                   </div>
                 </div>
 
                 <div style={{ marginTop: 12, ...cardSoft }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                    <div style={{ fontWeight: 900 }}>📌 Nội dung bắt buộc phải chép</div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ fontWeight: 900 }}>
+                      📌 Nội dung bắt buộc phải chép
+                    </div>
                     <button
                       type="button"
                       onClick={() => setChecklistOpen((v) => !v)}
@@ -900,25 +1095,66 @@ export default function PrelearningWizardPage() {
                           {checklistText}
                         </pre>
                       ) : (
-                        <div style={{ color: "var(--text-muted)", fontSize: 14, lineHeight: 1.7 }}>
+                        <div
+                          style={{
+                            color: "var(--text-muted)",
+                            fontSize: 14,
+                            lineHeight: 1.7,
+                          }}
+                        >
                           ⚠️ Chưa có nội dung bắt buộc cho lesson này.
                         </div>
                       )}
-                      <div style={{ marginTop: 10, color: "var(--text-faint)", fontSize: 13, lineHeight: 1.7 }}>
+                      <div
+                        style={{
+                          marginTop: 10,
+                          color: "var(--text-faint)",
+                          fontSize: 13,
+                          lineHeight: 1.7,
+                        }}
+                      >
                         {truthDbLoaded && dbRequiredNotes.trim() ? (
-                          <>Đang dùng <b style={{ color: "var(--text-primary)" }}>Truth Source từ Supabase</b>.</>
+                          <>
+                            Đang dùng{" "}
+                            <b style={{ color: "var(--text-primary)" }}>
+                              Truth Source từ Supabase
+                            </b>
+                            .
+                          </>
                         ) : (
-                          <>Đang dùng <b style={{ color: "var(--text-primary)" }}>fallback từ TRUTH_GROUND</b>.</>
+                          <>
+                            Đang dùng{" "}
+                            <b style={{ color: "var(--text-primary)" }}>
+                              fallback từ TRUTH_GROUND
+                            </b>
+                            .
+                          </>
                         )}
                       </div>
-                      <div style={{ marginTop: 6, color: "var(--text-faint)", fontSize: 13, lineHeight: 1.7 }}>
-                        Bạn <b style={{ color: "var(--text-primary)" }}>bắt buộc</b> phải chép đúng các ý trên.
+                      <div
+                        style={{
+                          marginTop: 6,
+                          color: "var(--text-faint)",
+                          fontSize: 13,
+                          lineHeight: 1.7,
+                        }}
+                      >
+                        Bạn <b style={{ color: "var(--text-primary)" }}>bắt buộc</b>{" "}
+                        phải chép đúng các ý trên.
                       </div>
                     </div>
                   )}
                 </div>
 
-                <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -941,7 +1177,10 @@ export default function PrelearningWizardPage() {
                   </button>
 
                   <div style={{ color: "var(--text-muted)", fontSize: 14 }}>
-                    Selected: <b style={{ color: "var(--text-primary)" }}>{selectedLabel}</b>
+                    Selected:{" "}
+                    <b style={{ color: "var(--text-primary)" }}>
+                      {selectedLabel}
+                    </b>
                   </div>
 
                   {notebookImages.length > 0 ? (
@@ -958,17 +1197,33 @@ export default function PrelearningWizardPage() {
 
                 {notebookImages.length > 1 ? (
                   <div style={{ marginTop: 10, ...cardSoft }}>
-                    <div style={{ fontWeight: 900, marginBottom: 6 }}>Danh sách ảnh đã chọn</div>
+                    <div style={{ fontWeight: 900, marginBottom: 6 }}>
+                      Danh sách ảnh đã chọn
+                    </div>
                     <div style={{ display: "grid", gap: 6 }}>
                       {notebookImages.slice(0, 30).map((f, idx) => (
                         <div
                           key={`${f.name}-${f.size}-${idx}`}
-                          style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13 }}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            fontSize: 13,
+                          }}
                         >
-                          <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <div
+                            style={{
+                              minWidth: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
                             {idx + 1}. {f.name}
                           </div>
-                          <div style={{ opacity: 0.75 }}>{Math.round(f.size / 1024)} KB</div>
+                          <div style={{ opacity: 0.75 }}>
+                            {Math.round(f.size / 1024)} KB
+                          </div>
                         </div>
                       ))}
                       {notebookImages.length > 30 ? (
@@ -981,10 +1236,25 @@ export default function PrelearningWizardPage() {
                 ) : null}
 
                 {notebookErr && (
-                  <pre style={{ marginTop: 10, color: "var(--danger)", whiteSpace: "pre-wrap" }}>{notebookErr}</pre>
+                  <pre
+                    style={{
+                      marginTop: 10,
+                      color: "var(--danger)",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {notebookErr}
+                  </pre>
                 )}
 
-                <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                  }}
+                >
                   <button
                     type="button"
                     onClick={handleEvaluateNotebook}
@@ -1000,19 +1270,42 @@ export default function PrelearningWizardPage() {
             {step === 2 && (
               <>
                 <div style={{ fontSize: 16, fontWeight: 900 }}>Step 2 — Quiz</div>
-                <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 14, lineHeight: 1.7 }}>
-                  Quiz giúp kiểm tra bạn đã xem qua bài. Điểm quiz tối đa <b>2 điểm</b>. Bạn phải làm hết 7 câu để đi tiếp.
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: "var(--text-muted)",
+                    fontSize: 14,
+                    lineHeight: 1.7,
+                  }}
+                >
+                  Quiz giúp kiểm tra bạn đã xem qua bài. Điểm quiz tối đa{" "}
+                  <b>2 điểm</b>. Bạn phải làm hết 7 câu để đi tiếp.
                 </div>
 
                 {quizLoading && (
-                  <div style={{ marginTop: 12, ...cardSoft, color: "var(--text-muted)", fontSize: 14 }}>
+                  <div
+                    style={{
+                      marginTop: 12,
+                      ...cardSoft,
+                      color: "var(--text-muted)",
+                      fontSize: 14,
+                    }}
+                  >
                     ⏳ Đang tạo quiz...
                   </div>
                 )}
 
                 {quizErr && (
                   <div style={{ marginTop: 12 }}>
-                    <pre style={{ margin: 0, color: "var(--danger)", whiteSpace: "pre-wrap" }}>{quizErr}</pre>
+                    <pre
+                      style={{
+                        margin: 0,
+                        color: "var(--danger)",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {quizErr}
+                    </pre>
                     <button
                       type="button"
                       onClick={() => {
@@ -1030,21 +1323,54 @@ export default function PrelearningWizardPage() {
                 )}
 
                 {quiz && (
-                  <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div
+                    style={{
+                      marginTop: 12,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 14,
+                    }}
+                  >
                     {quiz.questions.map((qq, idx) => (
                       <div key={qq.id} style={cardSoft}>
-                        <div style={{ fontWeight: 950, fontSize: 15, lineHeight: 1.6 }}>
+                        <div
+                          style={{
+                            fontWeight: 950,
+                            fontSize: 15,
+                            lineHeight: 1.6,
+                          }}
+                        >
                           {idx + 1}. {qq.instruction_vi}
-                          <span style={{ display: "block", marginTop: 4, color: "var(--text-muted)", fontWeight: 750 }}>
+                          <span
+                            style={{
+                              display: "block",
+                              marginTop: 4,
+                              color: "var(--text-muted)",
+                              fontWeight: 750,
+                            }}
+                          >
                             {qq.instruction_en}
                           </span>
                         </div>
 
-                        <div style={{ marginTop: 10, fontSize: 15, lineHeight: 1.75, color: "var(--text-primary)" }}>
+                        <div
+                          style={{
+                            marginTop: 10,
+                            fontSize: 15,
+                            lineHeight: 1.75,
+                            color: "var(--text-primary)",
+                          }}
+                        >
                           {qq.sentence_en}
                         </div>
 
-                        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                        <div
+                          style={{
+                            marginTop: 10,
+                            display: "grid",
+                            gap: 8,
+                          }}
+                        >
                           {[0, 1, 2, 3].map((ci) => {
                             const selected = quizAnswers[idx] === ci;
                             const choiceText = getChoiceTextSingle(qq, ci);
@@ -1063,7 +1389,9 @@ export default function PrelearningWizardPage() {
                                   padding: "10px 12px",
                                   borderRadius: 10,
                                   border: "1px solid var(--btn-border)",
-                                  background: selected ? "var(--primary-weak)" : "var(--btn-bg)",
+                                  background: selected
+                                    ? "var(--primary-weak)"
+                                    : "var(--btn-bg)",
                                   color: "var(--text-primary)",
                                   cursor: "pointer",
                                   fontWeight: selected ? 900 : 750,
@@ -1083,7 +1411,9 @@ export default function PrelearningWizardPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          setQuestions((prev) => (prev.length >= 3 ? prev : ["", "", ""]));
+                          setQuestions((prev) =>
+                            prev.length >= 3 ? prev : ["", "", ""]
+                          );
                           setStep(3);
                         }}
                         style={btnPrimary}
@@ -1093,7 +1423,11 @@ export default function PrelearningWizardPage() {
                         Tiếp tục → (Questions)
                       </button>
 
-                      <button type="button" onClick={() => setStep(1)} style={btnGhost}>
+                      <button
+                        type="button"
+                        onClick={() => setStep(1)}
+                        style={btnGhost}
+                      >
                         ← Back to notebook
                       </button>
                     </div>
@@ -1104,16 +1438,38 @@ export default function PrelearningWizardPage() {
 
             {step === 3 && (
               <>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                  <div style={{ fontSize: 16, fontWeight: 900 }}>Step 3 — Viết câu hỏi (min 3, không giới hạn)</div>
-                  <button type="button" onClick={addQuestionRow} style={btnGhost} title="Thêm câu hỏi">
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    alignItems: "center",
+                  }}
+                >
+                  <div style={{ fontSize: 16, fontWeight: 900 }}>
+                    Step 3 — Viết câu hỏi (min 3, không giới hạn)
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addQuestionRow}
+                    style={btnGhost}
+                    title="Thêm câu hỏi"
+                  >
                     ＋
                   </button>
                 </div>
 
-                <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 14, lineHeight: 1.7 }}>
-                  Hãy viết tối thiểu <b>3</b> câu hỏi liên quan bài học. Nếu muốn hỏi thêm, bấm <b>＋</b>. AI sẽ đánh giá
-                  chất lượng câu hỏi (0–2 điểm).
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: "var(--text-muted)",
+                    fontSize: 14,
+                    lineHeight: 1.7,
+                  }}
+                >
+                  Hãy viết tối thiểu <b>3</b> câu hỏi liên quan bài học. Nếu muốn
+                  hỏi thêm, bấm <b>＋</b>. AI sẽ đánh giá chất lượng câu hỏi (0–2
+                  điểm).
                 </div>
 
                 <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
@@ -1131,12 +1487,21 @@ export default function PrelearningWizardPage() {
                       }}
                     >
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 6, fontWeight: 900 }}>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: "var(--text-muted)",
+                            marginBottom: 6,
+                            fontWeight: 900,
+                          }}
+                        >
                           Câu hỏi {idx + 1}
                         </div>
                         <textarea
                           value={q}
-                          onChange={(e) => updateQuestionRow(idx, e.target.value)}
+                          onChange={(e) =>
+                            updateQuestionRow(idx, e.target.value)
+                          }
                           placeholder={`Ví dụ: "Why do we use 'does' with he/she/it?"`}
                           rows={3}
                           style={{
@@ -1155,17 +1520,28 @@ export default function PrelearningWizardPage() {
                         />
                       </div>
 
-                      <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          justifyContent: "flex-end",
+                        }}
+                      >
                         <button
                           type="button"
                           onClick={() => removeQuestionRow(idx)}
                           style={{
                             ...btnGhost,
-                            cursor: questions.length > 3 ? "pointer" : "not-allowed",
+                            cursor:
+                              questions.length > 3 ? "pointer" : "not-allowed",
                             opacity: questions.length > 3 ? 1 : 0.4,
                           }}
                           disabled={questions.length <= 3}
-                          title={questions.length <= 3 ? "Tối thiểu 3 câu hỏi" : "Xoá dòng này"}
+                          title={
+                            questions.length <= 3
+                              ? "Tối thiểu 3 câu hỏi"
+                              : "Xoá dòng này"
+                          }
                         >
                           🗑
                         </button>
@@ -1175,20 +1551,44 @@ export default function PrelearningWizardPage() {
                 </div>
 
                 {questionsErr && (
-                  <pre style={{ marginTop: 10, color: "var(--danger)", whiteSpace: "pre-wrap" }}>{questionsErr}</pre>
+                  <pre
+                    style={{
+                      marginTop: 10,
+                      color: "var(--danger)",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {questionsErr}
+                  </pre>
                 )}
 
-                <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                  }}
+                >
                   <button
                     type="button"
                     onClick={handleEvaluateQuestions}
-                    style={{ ...btnPrimary, opacity: questionsLoading ? 0.7 : 1 }}
+                    style={{
+                      ...btnPrimary,
+                      opacity: questionsLoading ? 0.7 : 1,
+                    }}
                     disabled={questionsLoading}
                   >
-                    {questionsLoading ? "Đánh giá câu hỏi..." : "Submit prelearning →"}
+                    {questionsLoading
+                      ? "Đánh giá câu hỏi..."
+                      : "Submit prelearning →"}
                   </button>
 
-                  <button type="button" onClick={() => setStep(2)} style={btnGhost}>
+                  <button
+                    type="button"
+                    onClick={() => setStep(2)}
+                    style={btnGhost}
+                  >
                     ← Back to quiz
                   </button>
                 </div>
@@ -1197,11 +1597,23 @@ export default function PrelearningWizardPage() {
 
             {step === 4 && (
               <>
-                <div style={{ fontSize: 20, fontWeight: 950 }}>Done — Kết quả Pre-learning</div>
+                <div style={{ fontSize: 20, fontWeight: 950 }}>
+                  Done — Kết quả Pre-learning
+                </div>
 
-                <div style={{ marginTop: 12, color: "var(--text-muted)", lineHeight: 1.8, fontSize: 16 }}>
+                <div
+                  style={{
+                    marginTop: 12,
+                    color: "var(--text-muted)",
+                    lineHeight: 1.8,
+                    fontSize: 16,
+                  }}
+                >
                   <div>
-                    📄 Notebook: <b style={{ color: "var(--text-primary)" }}>{computedNotebookScore6}/6</b>
+                    📄 Notebook:{" "}
+                    <b style={{ color: "var(--text-primary)" }}>
+                      {computedNotebookScore6}/6
+                    </b>
                   </div>
                   <div>
                     🧩 Quiz:{" "}
@@ -1211,22 +1623,45 @@ export default function PrelearningWizardPage() {
                     ({quizCorrect}/{quizTotal})
                   </div>
                   <div>
-                    ❓ Questions: <b style={{ color: "var(--text-primary)" }}>{computedQuestionsScore2}/2</b>
+                    ❓ Questions:{" "}
+                    <b style={{ color: "var(--text-primary)" }}>
+                      {computedQuestionsScore2}/2
+                    </b>
                   </div>
                   <div style={{ marginTop: 10, fontSize: 18 }}>
-                    👉 Total: <b style={{ color: "var(--text-primary)" }}>{computedTotal10}/10</b>
+                    👉 Total:{" "}
+                    <b style={{ color: "var(--text-primary)" }}>
+                      {computedTotal10}/10
+                    </b>
                   </div>
                 </div>
 
                 <div style={{ marginTop: 14, ...cardSoft }}>
-                  <div style={{ fontWeight: 950, fontSize: 16 }}>{readiness.title}</div>
-                  <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 15, lineHeight: 1.85 }}>
+                  <div style={{ fontWeight: 950, fontSize: 16 }}>
+                    {readiness.title}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      color: "var(--text-muted)",
+                      fontSize: 15,
+                      lineHeight: 1.85,
+                    }}
+                  >
                     {readiness.body}
                   </div>
 
                   {notebookEval?.feedback?.length ? (
                     <div style={{ marginTop: 12 }}>
-                      <div style={{ fontWeight: 950, marginBottom: 8, fontSize: 15 }}>Notebook feedback</div>
+                      <div
+                        style={{
+                          fontWeight: 950,
+                          marginBottom: 8,
+                          fontSize: 15,
+                        }}
+                      >
+                        Notebook feedback
+                      </div>
                       <ul
                         style={{
                           margin: 0,
@@ -1245,20 +1680,52 @@ export default function PrelearningWizardPage() {
 
                   {quiz && quizAnswers.length > 0 ? (
                     <div style={{ marginTop: 14 }}>
-                      <div style={{ fontWeight: 950, marginBottom: 8, fontSize: 15 }}>Quiz feedback</div>
+                      <div
+                        style={{
+                          fontWeight: 950,
+                          marginBottom: 8,
+                          fontSize: 15,
+                        }}
+                      >
+                        Quiz feedback
+                      </div>
 
                       {wrongQuizItems.length === 0 ? (
-                        <div style={{ color: "var(--text-muted)", fontSize: 15, lineHeight: 1.85 }}>
+                        <div
+                          style={{
+                            color: "var(--text-muted)",
+                            fontSize: 15,
+                            lineHeight: 1.85,
+                          }}
+                        >
                           ✅ Bạn làm đúng hết quiz. Rất tốt!
                         </div>
                       ) : (
                         <>
-                          <div style={{ color: "var(--text-muted)", fontSize: 15, lineHeight: 1.85 }}>
-                            Bạn sai <b style={{ color: "var(--text-primary)" }}>{wrongQuizItems.length}</b> câu.
+                          <div
+                            style={{
+                              color: "var(--text-muted)",
+                              fontSize: 15,
+                              lineHeight: 1.85,
+                            }}
+                          >
+                            Bạn sai{" "}
+                            <b style={{ color: "var(--text-primary)" }}>
+                              {wrongQuizItems.length}
+                            </b>{" "}
+                            câu.
                           </div>
 
                           <div style={{ marginTop: 10 }}>
-                            <div style={{ fontWeight: 950, marginBottom: 6, fontSize: 15 }}>👉 Bạn đang yếu ở:</div>
+                            <div
+                              style={{
+                                fontWeight: 950,
+                                marginBottom: 6,
+                                fontSize: 15,
+                              }}
+                            >
+                              👉 Bạn đang yếu ở:
+                            </div>
 
                             <ul
                               style={{
@@ -1271,8 +1738,15 @@ export default function PrelearningWizardPage() {
                             >
                               {topWeakPoints.map((w, i) => (
                                 <li key={i}>
-                                  <b style={{ color: "var(--text-primary)" }}>{w.title}</b>. {w.tip}
-                                  {w.example ? <span style={{ display: "block" }}>{w.example}</span> : null}
+                                  <b style={{ color: "var(--text-primary)" }}>
+                                    {w.title}
+                                  </b>
+                                  . {w.tip}
+                                  {w.example ? (
+                                    <span style={{ display: "block" }}>
+                                      {w.example}
+                                    </span>
+                                  ) : null}
                                 </li>
                               ))}
                             </ul>
@@ -1284,54 +1758,101 @@ export default function PrelearningWizardPage() {
                                 style={btnGhost}
                                 aria-expanded={showWrongDetails}
                               >
-                                {showWrongDetails ? "Thu gọn chi tiết câu sai" : "Chi tiết câu sai (nếu bạn muốn xem)"}
+                                {showWrongDetails
+                                  ? "Thu gọn chi tiết câu sai"
+                                  : "Chi tiết câu sai (nếu bạn muốn xem)"}
                               </button>
 
                               {showWrongDetails && (
-                                <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-                                  {wrongQuizItems.map(({ idx, q, selected, correct }) => {
-                                    const selectedText = getChoiceTextSingle(q, selected);
-                                    const correctText = getChoiceTextSingle(q, correct);
-                                    const why = explainForWrong(q);
+                                <div
+                                  style={{
+                                    marginTop: 12,
+                                    display: "grid",
+                                    gap: 10,
+                                  }}
+                                >
+                                  {wrongQuizItems.map(
+                                    ({ idx, q, selected, correct }) => {
+                                      const selectedText = getChoiceTextSingle(
+                                        q,
+                                        selected
+                                      );
+                                      const correctText = getChoiceTextSingle(
+                                        q,
+                                        correct
+                                      );
+                                      const why = explainForWrong(q);
 
-                                    return (
-                                      <div key={`${q.id}-${idx}`} style={cardSoft}>
-                                        <div style={{ fontWeight: 950, fontSize: 14, lineHeight: 1.6 }}>
-                                          Câu {idx + 1}: {q.instruction_vi}
-                                          <div style={{ color: "var(--text-muted)", fontWeight: 750, marginTop: 4 }}>
-                                            {q.instruction_en}
-                                          </div>
-                                        </div>
-
-                                        <div style={{ marginTop: 8, fontSize: 15, lineHeight: 1.75 }}>
-                                          {q.sentence_en}
-                                        </div>
-
+                                      return (
                                         <div
-                                          style={{
-                                            marginTop: 10,
-                                            fontSize: 14,
-                                            lineHeight: 1.75,
-                                            color: "var(--text-muted)",
-                                          }}
+                                          key={`${q.id}-${idx}`}
+                                          style={cardSoft}
                                         >
-                                          <div>
-                                            ❌ Bạn chọn:{" "}
-                                            <b style={{ color: "var(--text-primary)" }}>
-                                              {letter(selected)}. {selectedText}
-                                            </b>
+                                          <div
+                                            style={{
+                                              fontWeight: 950,
+                                              fontSize: 14,
+                                              lineHeight: 1.6,
+                                            }}
+                                          >
+                                            Câu {idx + 1}: {q.instruction_vi}
+                                            <div
+                                              style={{
+                                                color: "var(--text-muted)",
+                                                fontWeight: 750,
+                                                marginTop: 4,
+                                              }}
+                                            >
+                                              {q.instruction_en}
+                                            </div>
                                           </div>
-                                          <div style={{ marginTop: 4 }}>
-                                            ✅ Đáp án đúng:{" "}
-                                            <b style={{ color: "var(--text-primary)" }}>
-                                              {letter(correct)}. {correctText}
-                                            </b>
+
+                                          <div
+                                            style={{
+                                              marginTop: 8,
+                                              fontSize: 15,
+                                              lineHeight: 1.75,
+                                            }}
+                                          >
+                                            {q.sentence_en}
                                           </div>
-                                          <div style={{ marginTop: 8 }}>👉 Vì sao: {why}</div>
+
+                                          <div
+                                            style={{
+                                              marginTop: 10,
+                                              fontSize: 14,
+                                              lineHeight: 1.75,
+                                              color: "var(--text-muted)",
+                                            }}
+                                          >
+                                            <div>
+                                              ❌ Bạn chọn:{" "}
+                                              <b
+                                                style={{
+                                                  color: "var(--text-primary)",
+                                                }}
+                                              >
+                                                {letter(selected)}. {selectedText}
+                                              </b>
+                                            </div>
+                                            <div style={{ marginTop: 4 }}>
+                                              ✅ Đáp án đúng:{" "}
+                                              <b
+                                                style={{
+                                                  color: "var(--text-primary)",
+                                                }}
+                                              >
+                                                {letter(correct)}. {correctText}
+                                              </b>
+                                            </div>
+                                            <div style={{ marginTop: 8 }}>
+                                              👉 Vì sao: {why}
+                                            </div>
+                                          </div>
                                         </div>
-                                      </div>
-                                    );
-                                  })}
+                                      );
+                                    }
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -1341,9 +1862,18 @@ export default function PrelearningWizardPage() {
                     </div>
                   ) : null}
 
-                  {questionsEval?.feedback?.length || questionsEval?.notes?.length ? (
+                  {questionsEval?.feedback?.length ||
+                  questionsEval?.notes?.length ? (
                     <div style={{ marginTop: 14 }}>
-                      <div style={{ fontWeight: 950, marginBottom: 8, fontSize: 15 }}>Questions feedback</div>
+                      <div
+                        style={{
+                          fontWeight: 950,
+                          marginBottom: 8,
+                          fontSize: 15,
+                        }}
+                      >
+                        Questions feedback
+                      </div>
                       <ul
                         style={{
                           margin: 0,
@@ -1353,19 +1883,39 @@ export default function PrelearningWizardPage() {
                           color: "var(--text-muted)",
                         }}
                       >
-                        {(questionsEval.feedback ?? questionsEval.notes ?? []).slice(0, 7).map((f, i) => (
-                          <li key={i}>{f}</li>
-                        ))}
+                        {(questionsEval.feedback ??
+                          questionsEval.notes ??
+                          []
+                        )
+                          .slice(0, 7)
+                          .map((f, i) => (
+                            <li key={i}>{f}</li>
+                          ))}
                       </ul>
                     </div>
                   ) : null}
                 </div>
 
                 {submitErr && (
-                  <pre style={{ marginTop: 10, color: "var(--danger)", whiteSpace: "pre-wrap" }}>{submitErr}</pre>
+                  <pre
+                    style={{
+                      marginTop: 10,
+                      color: "var(--danger)",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {submitErr}
+                  </pre>
                 )}
 
-                <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                  }}
+                >
                   <button
                     type="button"
                     onClick={handleSubmit}
@@ -1379,14 +1929,27 @@ export default function PrelearningWizardPage() {
                     Làm lại từ đầu (quiz mới)
                   </button>
 
-                  <button type="button" onClick={() => router.push("/app")} style={btnGhost}>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/app")}
+                    style={btnGhost}
+                  >
                     Back to dashboard
                   </button>
                 </div>
 
                 {finalScore10 !== null && (
-                  <div style={{ marginTop: 10, color: "var(--text-muted)", fontSize: 15 }}>
-                    ✅ Saved. Total score = <b style={{ color: "var(--text-primary)" }}>{finalScore10}/10</b>
+                  <div
+                    style={{
+                      marginTop: 10,
+                      color: "var(--text-muted)",
+                      fontSize: 15,
+                    }}
+                  >
+                    ✅ Saved. Total score ={" "}
+                    <b style={{ color: "var(--text-primary)" }}>
+                      {finalScore10}/10
+                    </b>
                   </div>
                 )}
               </>
@@ -1395,25 +1958,55 @@ export default function PrelearningWizardPage() {
 
           <div style={cardStyle}>
             <div style={{ fontWeight: 900 }}>Guidance</div>
-            <div style={{ marginTop: 10, color: "var(--text-muted)", fontSize: 14, lineHeight: 1.8 }}>
-              <div style={{ fontWeight: 900, marginBottom: 6, color: "var(--text-primary)" }}>Chấm Notebook (0–6)</div>
+            <div
+              style={{
+                marginTop: 10,
+                color: "var(--text-muted)",
+                fontSize: 14,
+                lineHeight: 1.8,
+              }}
+            >
+              <div
+                style={{
+                  fontWeight: 900,
+                  marginBottom: 6,
+                  color: "var(--text-primary)",
+                }}
+              >
+                Chấm Notebook (0–6)
+              </div>
               <ul style={{ margin: 0, paddingLeft: 18 }}>
-                <li>Đủ ý quan trọng theo slide/tutor (0–4)</li>
-                <li>Trình bày rõ ràng, chữ dễ đọc (0–2)</li>
+                <li>Đủ ý quan trọng theo checklist lesson (0–4)</li>
+                <li>Trình bày rõ ràng, chữ dễ đọc theo rubric lesson (0–2)</li>
               </ul>
 
-              <div style={{ fontWeight: 900, marginTop: 12, marginBottom: 6, color: "var(--text-primary)" }}>
+              <div
+                style={{
+                  fontWeight: 900,
+                  marginTop: 12,
+                  marginBottom: 6,
+                  color: "var(--text-primary)",
+                }}
+              >
                 Quiz (0–2)
               </div>
               <div>Điểm = (đúng/tổng) × 2</div>
 
-              <div style={{ fontWeight: 900, marginTop: 12, marginBottom: 6, color: "var(--text-primary)" }}>
+              <div
+                style={{
+                  fontWeight: 900,
+                  marginTop: 12,
+                  marginBottom: 6,
+                  color: "var(--text-primary)",
+                }}
+              >
                 Questions (0–2)
               </div>
               <div>AI chấm mức độ cụ thể & liên quan bài học.</div>
 
               <div style={{ marginTop: 12, color: "var(--text-faint)" }}>
-                Tip: Nếu score thấp, làm lại sẽ giúp tutor hiểu bạn đang thiếu gì và dạy đúng chỗ.
+                Tip: Nếu score thấp, làm lại sẽ giúp tutor hiểu bạn đang thiếu gì
+                và dạy đúng chỗ.
               </div>
             </div>
           </div>
