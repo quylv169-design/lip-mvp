@@ -40,6 +40,37 @@ type ImportedQuestionInput = {
   is_active?: boolean;
 };
 
+type SectionKey =
+  | "truthSource"
+  | "prelearningJson"
+  | "theoryJson"
+  | "practiceJson";
+
+type SectionStatus = {
+  kind: "idle" | "loading" | "loaded" | "saving" | "success" | "error";
+  text: string;
+};
+
+type LessonTruthRow = {
+  lesson_id: string;
+  content: string | null;
+};
+
+type QuestionBankRow = {
+  lesson_id: string;
+  question_type: string;
+  question_text: string | null;
+  instruction_vi: string | null;
+  instruction_en: string | null;
+  sentence_en: string | null;
+  options: unknown;
+  answer_index: number | null;
+  explanation_vi: string | null;
+  skill_tag: string | null;
+  difficulty: string | null;
+  is_active: boolean | null;
+};
+
 const UI_FONT =
   'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"';
 
@@ -49,6 +80,8 @@ const EMPTY_DRAFT: LessonDraft = {
   theoryJson: "",
   practiceJson: "",
 };
+
+const IDLE_STATUS: SectionStatus = { kind: "idle", text: "" };
 
 export default function AdminPage() {
   const router = useRouter();
@@ -65,11 +98,14 @@ export default function AdminPage() {
   const [lessonDrafts, setLessonDrafts] = useState<Record<string, LessonDraft>>(
     {}
   );
+  const [sectionStatus, setSectionStatus] = useState<
+    Record<string, Record<SectionKey, SectionStatus>>
+  >({});
   const [addingLesson, setAddingLesson] = useState(false);
 
-  const [prelearningCounts, setPrelearningCounts] = useState<Record<string, number>>(
-    {}
-  );
+  const [countsByLesson, setCountsByLesson] = useState<
+    Record<string, { prelearning: number; theory: number; practice: number }>
+  >({});
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewTitle, setViewTitle] = useState<string>("");
@@ -110,12 +146,7 @@ export default function AdminPage() {
         .eq("id", user.id)
         .single();
 
-      if (profileErr || !profile) {
-        router.replace("/app");
-        return;
-      }
-
-      if (profile.role !== "admin") {
+      if (profileErr || !profile || profile.role !== "admin") {
         router.replace("/app");
         return;
       }
@@ -144,9 +175,12 @@ export default function AdminPage() {
       if (!selectedClassId) {
         setLessons([]);
         setExpandedLessonId(null);
-        setPrelearningCounts({});
+        setCountsByLesson({});
+        setLessonDrafts({});
+        setSectionStatus({});
         return;
       }
+
       setMsg("");
 
       const { data, error } = await supabase
@@ -164,38 +198,159 @@ export default function AdminPage() {
       const nextLessons = (data as LessonRow[]) ?? [];
       setLessons(nextLessons);
 
-      setLessonDrafts((prev) => {
-        const next = { ...prev };
-        for (const lesson of nextLessons) {
-          if (!next[lesson.id]) {
-            next[lesson.id] = { ...EMPTY_DRAFT };
+      const lessonIds = nextLessons.map((l) => l.id);
+      const nextDrafts: Record<string, LessonDraft> = {};
+      const nextStatus: Record<string, Record<SectionKey, SectionStatus>> = {};
+      const nextCounts: Record<
+        string,
+        { prelearning: number; theory: number; practice: number }
+      > = {};
+
+      for (const lesson of nextLessons) {
+        nextDrafts[lesson.id] = { ...EMPTY_DRAFT };
+        nextStatus[lesson.id] = {
+          truthSource: { kind: "loading", text: "Loading from database..." },
+          prelearningJson: { kind: "loading", text: "Loading from database..." },
+          theoryJson: { kind: "loading", text: "Loading from database..." },
+          practiceJson: { kind: "loading", text: "Loading from database..." },
+        };
+        nextCounts[lesson.id] = { prelearning: 0, theory: 0, practice: 0 };
+      }
+
+      if (lessonIds.length > 0) {
+        const { data: truthRows, error: truthErr } = await supabase
+          .from("lesson_truth")
+          .select("lesson_id,content")
+          .in("lesson_id", lessonIds);
+
+        if (!truthErr) {
+          for (const row of (truthRows ?? []) as LessonTruthRow[]) {
+            if (!nextDrafts[row.lesson_id]) continue;
+            nextDrafts[row.lesson_id].truthSource = row.content ?? "";
+            nextStatus[row.lesson_id].truthSource = {
+              kind: "loaded",
+              text: row.content?.trim()
+                ? "Loaded from database"
+                : "No saved truth source yet",
+            };
+          }
+        } else {
+          for (const lessonId of lessonIds) {
+            nextStatus[lessonId].truthSource = {
+              kind: "error",
+              text: "Load failed: " + truthErr.message,
+            };
           }
         }
-        return next;
-      });
 
-      const lessonIds = nextLessons.map((l) => l.id);
-      if (lessonIds.length > 0) {
+        for (const lessonId of lessonIds) {
+          if (nextStatus[lessonId].truthSource.kind === "loading") {
+            nextStatus[lessonId].truthSource = {
+              kind: "loaded",
+              text: "No saved truth source yet",
+            };
+          }
+        }
+
         const { data: qbRows, error: qbErr } = await supabase
           .from("question_bank")
-          .select("lesson_id")
+          .select(
+            "lesson_id,question_type,question_text,instruction_vi,instruction_en,sentence_en,options,answer_index,explanation_vi,skill_tag,difficulty,is_active"
+          )
           .in("lesson_id", lessonIds)
-          .eq("question_type", "prelearning")
-          .eq("is_active", true);
+          .in("question_type", ["prelearning", "theory", "practice"]);
 
         if (!qbErr) {
-          const counts: Record<string, number> = {};
-          for (const lessonId of lessonIds) counts[lessonId] = 0;
-          for (const row of (qbRows ?? []) as { lesson_id: string }[]) {
-            counts[row.lesson_id] = (counts[row.lesson_id] ?? 0) + 1;
+          const grouped: Record<
+            string,
+            { prelearning: unknown[]; theory: unknown[]; practice: unknown[] }
+          > = {};
+
+          for (const lessonId of lessonIds) {
+            grouped[lessonId] = { prelearning: [], theory: [], practice: [] };
           }
-          setPrelearningCounts(counts);
+
+          for (const row of (qbRows ?? []) as QuestionBankRow[]) {
+            const lid = row.lesson_id;
+            const type = row.question_type as "prelearning" | "theory" | "practice";
+            if (!grouped[lid] || !(type in grouped[lid])) continue;
+
+            const normalized = {
+              question_text: row.question_text ?? "",
+              instruction_vi: row.instruction_vi ?? "",
+              instruction_en: row.instruction_en ?? "",
+              sentence_en: row.sentence_en ?? "",
+              options: Array.isArray(row.options) ? row.options : [],
+              answer_index:
+                typeof row.answer_index === "number" ? row.answer_index : 0,
+              explanation_vi: row.explanation_vi ?? "",
+              skill_tag: row.skill_tag ?? "",
+              difficulty:
+                row.difficulty === "easy" ||
+                row.difficulty === "medium" ||
+                row.difficulty === "hard"
+                  ? row.difficulty
+                  : "easy",
+              is_active: row.is_active ?? true,
+            };
+
+            grouped[lid][type].push(normalized);
+            if (normalized.is_active) {
+              nextCounts[lid][type] += 1;
+            }
+          }
+
+          for (const lessonId of lessonIds) {
+            nextDrafts[lessonId].prelearningJson = grouped[lessonId].prelearning.length
+              ? JSON.stringify(grouped[lessonId].prelearning, null, 2)
+              : "";
+            nextDrafts[lessonId].theoryJson = grouped[lessonId].theory.length
+              ? JSON.stringify(grouped[lessonId].theory, null, 2)
+              : "";
+            nextDrafts[lessonId].practiceJson = grouped[lessonId].practice.length
+              ? JSON.stringify(grouped[lessonId].practice, null, 2)
+              : "";
+
+            nextStatus[lessonId].prelearningJson = {
+              kind: "loaded",
+              text: grouped[lessonId].prelearning.length
+                ? `Loaded ${grouped[lessonId].prelearning.length} questions from database`
+                : "No saved prelearning questions yet",
+            };
+            nextStatus[lessonId].theoryJson = {
+              kind: "loaded",
+              text: grouped[lessonId].theory.length
+                ? `Loaded ${grouped[lessonId].theory.length} questions from database`
+                : "No saved theory questions yet",
+            };
+            nextStatus[lessonId].practiceJson = {
+              kind: "loaded",
+              text: grouped[lessonId].practice.length
+                ? `Loaded ${grouped[lessonId].practice.length} questions from database`
+                : "No saved practice questions yet",
+            };
+          }
         } else {
-          setPrelearningCounts({});
+          for (const lessonId of lessonIds) {
+            nextStatus[lessonId].prelearningJson = {
+              kind: "error",
+              text: "Load failed: " + qbErr.message,
+            };
+            nextStatus[lessonId].theoryJson = {
+              kind: "error",
+              text: "Load failed: " + qbErr.message,
+            };
+            nextStatus[lessonId].practiceJson = {
+              kind: "error",
+              text: "Load failed: " + qbErr.message,
+            };
+          }
         }
-      } else {
-        setPrelearningCounts({});
       }
+
+      setLessonDrafts(nextDrafts);
+      setSectionStatus(nextStatus);
+      setCountsByLesson(nextCounts);
 
       if (nextLessons.length > 0 && !expandedLessonId) {
         setExpandedLessonId(nextLessons[0].id);
@@ -212,6 +367,24 @@ export default function AdminPage() {
     if (viewOpen) window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [viewOpen]);
+
+  function setSectionState(
+    lessonId: string,
+    section: SectionKey,
+    status: SectionStatus
+  ) {
+    setSectionStatus((prev) => ({
+      ...prev,
+      [lessonId]: {
+        truthSource: prev[lessonId]?.truthSource ?? IDLE_STATUS,
+        prelearningJson: prev[lessonId]?.prelearningJson ?? IDLE_STATUS,
+        theoryJson: prev[lessonId]?.theoryJson ?? IDLE_STATUS,
+        practiceJson: prev[lessonId]?.practiceJson ?? IDLE_STATUS,
+        ...(prev[lessonId] ?? {}),
+        [section]: status,
+      },
+    }));
+  }
 
   async function logout() {
     await supabase.auth.signOut();
@@ -230,6 +403,10 @@ export default function AdminPage() {
     return lessonDrafts[lessonId] ?? { ...EMPTY_DRAFT };
   }
 
+  function getSectionStatus(lessonId: string, section: SectionKey): SectionStatus {
+    return sectionStatus[lessonId]?.[section] ?? IDLE_STATUS;
+  }
+
   function updateLessonDraft(
     lessonId: string,
     key: keyof LessonDraft,
@@ -244,7 +421,9 @@ export default function AdminPage() {
     }));
   }
 
-  function parseJsonArray(raw: string): { ok: true; items: unknown[] } | { ok: false; error: string } {
+  function parseJsonArray(
+    raw: string
+  ): { ok: true; items: unknown[] } | { ok: false; error: string } {
     const text = raw.trim();
 
     if (!text) {
@@ -273,7 +452,10 @@ export default function AdminPage() {
     return true;
   }
 
-  function normalizeImportedQuestion(item: unknown, index: number): ImportedQuestionInput {
+  function normalizeImportedQuestion(
+    item: unknown,
+    index: number
+  ): ImportedQuestionInput {
     const obj = (item ?? {}) as Record<string, unknown>;
 
     return {
@@ -293,24 +475,33 @@ export default function AdminPage() {
           ? obj.answer_index
           : Number(obj.answer_index ?? -1),
       explanation_vi:
-        typeof obj.explanation_vi === "string" ? obj.explanation_vi.trim() : "",
+        typeof obj.explanation_vi === "string"
+          ? obj.explanation_vi.trim()
+          : "",
       skill_tag:
-        typeof obj.skill_tag === "string" ? obj.skill_tag.trim() : `prelearning_skill_${index + 1}`,
+        typeof obj.skill_tag === "string" && obj.skill_tag.trim()
+          ? obj.skill_tag.trim()
+          : `skill_${index + 1}`,
       difficulty:
-        obj.difficulty === "easy" || obj.difficulty === "medium" || obj.difficulty === "hard"
+        obj.difficulty === "easy" ||
+        obj.difficulty === "medium" ||
+        obj.difficulty === "hard"
           ? obj.difficulty
           : "easy",
-      is_active:
-        typeof obj.is_active === "boolean" ? obj.is_active : true,
+      is_active: typeof obj.is_active === "boolean" ? obj.is_active : true,
     };
   }
 
-  function validateImportedQuestions(items: unknown[]): { ok: true; rows: ImportedQuestionInput[] } | { ok: false; error: string } {
+  function validateImportedQuestions(
+    items: unknown[]
+  ): { ok: true; rows: ImportedQuestionInput[] } | { ok: false; error: string } {
     if (items.length === 0) {
       return { ok: false, error: "JSON array đang rỗng." };
     }
 
-    const rows = items.map((item, index) => normalizeImportedQuestion(item, index));
+    const rows = items.map((item, index) =>
+      normalizeImportedQuestion(item, index)
+    );
 
     for (let i = 0; i < rows.length; i += 1) {
       const q = rows[i];
@@ -329,8 +520,15 @@ export default function AdminPage() {
         return { ok: false, error: `Câu ${n} có option đang rỗng.` };
       }
 
-      if (!Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex > 3) {
-        return { ok: false, error: `Câu ${n} có answer_index không hợp lệ. Chỉ được 0–3.` };
+      if (
+        !Number.isInteger(answerIndex) ||
+        answerIndex < 0 ||
+        answerIndex > 3
+      ) {
+        return {
+          ok: false,
+          error: `Câu ${n} có answer_index không hợp lệ. Chỉ được 0–3.`,
+        };
       }
 
       if (!q.skill_tag) {
@@ -343,44 +541,19 @@ export default function AdminPage() {
 
   function getContentSummary(lessonId: string) {
     const draft = getDraft(lessonId);
+    const counts = countsByLesson[lessonId] ?? {
+      prelearning: 0,
+      theory: 0,
+      practice: 0,
+    };
 
-    const truthState = draft.truthSource.trim() ? "Filled" : "Empty";
-
-    const prelearningState = (() => {
-      const dbCount = prelearningCounts[lessonId] ?? 0;
-      if (dbCount > 0) return `${dbCount} saved`;
-
-      const raw = draft.prelearningJson.trim();
-      if (!raw) return "Empty";
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? `${parsed.length} draft` : "Draft";
-      } catch {
-        return "Draft";
-      }
-    })();
-
-    const theoryState = (() => {
-      const raw = draft.theoryJson.trim();
-      if (!raw) return "Empty";
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? `${parsed.length} items` : "Filled";
-      } catch {
-        return "Draft";
-      }
-    })();
-
-    const practiceState = (() => {
-      const raw = draft.practiceJson.trim();
-      if (!raw) return "Empty";
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? `${parsed.length} items` : "Filled";
-      } catch {
-        return "Draft";
-      }
-    })();
+    const truthState = draft.truthSource.trim() ? "Saved" : "Empty";
+    const prelearningState =
+      counts.prelearning > 0 ? `${counts.prelearning} saved` : "Empty";
+    const theoryState =
+      counts.theory > 0 ? `${counts.theory} saved` : "Empty";
+    const practiceState =
+      counts.practice > 0 ? `${counts.practice} saved` : "Empty";
 
     return {
       truthState,
@@ -429,7 +602,28 @@ export default function AdminPage() {
         ...prev,
         [newLesson.id]: { ...EMPTY_DRAFT },
       }));
-      setPrelearningCounts((prev) => ({ ...prev, [newLesson.id]: 0 }));
+      setCountsByLesson((prev) => ({
+        ...prev,
+        [newLesson.id]: { prelearning: 0, theory: 0, practice: 0 },
+      }));
+      setSectionStatus((prev) => ({
+        ...prev,
+        [newLesson.id]: {
+          truthSource: { kind: "loaded", text: "No saved truth source yet" },
+          prelearningJson: {
+            kind: "loaded",
+            text: "No saved prelearning questions yet",
+          },
+          theoryJson: {
+            kind: "loaded",
+            text: "No saved theory questions yet",
+          },
+          practiceJson: {
+            kind: "loaded",
+            text: "No saved practice questions yet",
+          },
+        },
+      }));
       setExpandedLessonId(newLesson.id);
       setMsg(`✅ Đã tạo lesson mới: ${newLesson.title}`);
     } finally {
@@ -441,27 +635,84 @@ export default function AdminPage() {
     setExpandedLessonId((prev) => (prev === lessonId ? null : lessonId));
   }
 
-  async function savePrelearningToSupabase(lesson: LessonRow) {
-    const raw = getDraft(lesson.id).prelearningJson;
+  async function saveTruthSource(lesson: LessonRow) {
+    const content = getDraft(lesson.id).truthSource.trim();
+
+    setBusyLessonId(lesson.id);
+    setSectionState(lesson.id, "truthSource", {
+      kind: "saving",
+      text: "Saving truth source...",
+    });
+
+    try {
+      const { error } = await supabase.from("lesson_truth").upsert(
+        {
+          lesson_id: lesson.id,
+          content,
+        },
+        {
+          onConflict: "lesson_id",
+        }
+      );
+
+      if (error) {
+        setSectionState(lesson.id, "truthSource", {
+          kind: "error",
+          text: "Save failed: " + error.message,
+        });
+        setMsg(`❌ ${lesson.title} — Save truth source lỗi: ${error.message}`);
+        return;
+      }
+
+      setSectionState(lesson.id, "truthSource", {
+        kind: "success",
+        text: content
+          ? "Saved successfully to lesson_truth"
+          : "Saved empty truth source",
+      });
+      setMsg(`✅ ${lesson.title} — Truth Source đã lưu thành công.`);
+    } finally {
+      setBusyLessonId(null);
+    }
+  }
+
+  async function saveQuestionSet(
+    lesson: LessonRow,
+    section: "prelearningJson" | "theoryJson" | "practiceJson",
+    questionType: "prelearning" | "theory" | "practice"
+  ) {
+    const raw = getDraft(lesson.id)[section];
     const parsed = parseJsonArray(raw);
+
     if (!parsed.ok) {
-      setMsg(`❌ ${lesson.title} — Prelearning Quiz: ${parsed.error}`);
+      setSectionState(lesson.id, section, {
+        kind: "error",
+        text: parsed.error,
+      });
+      setMsg(`❌ ${lesson.title} — ${questionType}: ${parsed.error}`);
       return;
     }
 
     const validated = validateImportedQuestions(parsed.items);
     if (!validated.ok) {
-      setMsg(`❌ ${lesson.title} — Prelearning Quiz: ${validated.error}`);
+      setSectionState(lesson.id, section, {
+        kind: "error",
+        text: validated.error,
+      });
+      setMsg(`❌ ${lesson.title} — ${questionType}: ${validated.error}`);
       return;
     }
 
     setBusyLessonId(lesson.id);
-    setMsg("");
+    setSectionState(lesson.id, section, {
+      kind: "saving",
+      text: `Saving ${questionType} questions...`,
+    });
 
     try {
       const rows = validated.rows.map((q) => ({
         lesson_id: lesson.id,
-        question_type: "prelearning",
+        question_type: questionType,
         question_text: q.question_text ?? "",
         instruction_vi: q.instruction_vi ?? "",
         instruction_en: q.instruction_en ?? "",
@@ -478,10 +729,16 @@ export default function AdminPage() {
         .from("question_bank")
         .delete()
         .eq("lesson_id", lesson.id)
-        .eq("question_type", "prelearning");
+        .eq("question_type", questionType);
 
       if (deleteErr) {
-        setMsg(`❌ ${lesson.title} — Xóa prelearning cũ lỗi: ${deleteErr.message}`);
+        setSectionState(lesson.id, section, {
+          kind: "error",
+          text: "Delete old set failed: " + deleteErr.message,
+        });
+        setMsg(
+          `❌ ${lesson.title} — Xóa ${questionType} cũ lỗi: ${deleteErr.message}`
+        );
         return;
       }
 
@@ -490,62 +747,58 @@ export default function AdminPage() {
         .insert(rows);
 
       if (insertErr) {
-        setMsg(`❌ ${lesson.title} — Save prelearning lỗi: ${insertErr.message}`);
+        setSectionState(lesson.id, section, {
+          kind: "error",
+          text: "Insert new set failed: " + insertErr.message,
+        });
+        setMsg(
+          `❌ ${lesson.title} — Save ${questionType} lỗi: ${insertErr.message}`
+        );
         return;
       }
 
-      setPrelearningCounts((prev) => ({
+      setCountsByLesson((prev) => ({
         ...prev,
-        [lesson.id]: rows.filter((r) => r.is_active).length,
+        [lesson.id]: {
+          ...(prev[lesson.id] ?? {
+            prelearning: 0,
+            theory: 0,
+            practice: 0,
+          }),
+          [questionType]: rows.filter((r) => r.is_active).length,
+        },
       }));
 
+      setSectionState(lesson.id, section, {
+        kind: "success",
+        text: `Saved successfully (${rows.length} questions)`,
+      });
       setMsg(
-        `✅ ${lesson.title} — Đã lưu ${rows.length} câu prelearning vào question_bank.`
+        `✅ ${lesson.title} — Đã lưu ${rows.length} câu ${questionType} vào question_bank.`
       );
     } finally {
       setBusyLessonId(null);
     }
   }
 
-  function saveSectionDraft(
-    lesson: LessonRow,
-    section: "truthSource" | "prelearningJson" | "theoryJson" | "practiceJson"
-  ) {
-    const draft = getDraft(lesson.id);
-
+  function saveSectionDraft(lesson: LessonRow, section: SectionKey) {
     if (section === "truthSource") {
-      if (!draft.truthSource.trim()) {
-        setMsg(`⚠️ ${lesson.title} — Truth Source đang trống.`);
-        return;
-      }
-      setMsg(
-        `ℹ️ ${lesson.title} — UI đã sẵn cho Truth Source.\nHiện phần này mới lưu draft trên màn hình, chưa save xuống Supabase vì bạn chưa tạo bảng content bank.`
-      );
+      void saveTruthSource(lesson);
       return;
     }
 
     if (section === "prelearningJson") {
-      void savePrelearningToSupabase(lesson);
+      void saveQuestionSet(lesson, section, "prelearning");
       return;
     }
 
     if (section === "theoryJson") {
-      if (!validateJsonArray(draft.theoryJson, `${lesson.title} — Theory Questions`)) {
-        return;
-      }
-      setMsg(
-        `ℹ️ ${lesson.title} — Theory Questions JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase.`
-      );
+      void saveQuestionSet(lesson, section, "theory");
       return;
     }
 
     if (section === "practiceJson") {
-      if (!validateJsonArray(draft.practiceJson, `${lesson.title} — Practice Questions`)) {
-        return;
-      }
-      setMsg(
-        `ℹ️ ${lesson.title} — Practice Questions JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase.`
-      );
+      void saveQuestionSet(lesson, section, "practice");
       return;
     }
   }
@@ -754,8 +1007,7 @@ export default function AdminPage() {
         `✅ Clone thành công!\n` +
           `Nguồn: ${templateClass.name}\n` +
           `Đích: ${selectedClass?.name ?? selectedClassId}\n` +
-          `Đã copy ${insertRows.length} lessons + slide_path.\n\n` +
-          `Tutor vào live class sẽ Present được ngay giống LIP-EL-001.`
+          `Đã copy ${insertRows.length} lessons + slide_path.`
       );
     } finally {
       setCloneBusy(false);
@@ -790,6 +1042,15 @@ export default function AdminPage() {
         <div style={{ marginTop: 12 }}>{children}</div>
       </div>
     );
+  }
+
+  function statusTextStyle(kind: SectionStatus["kind"]): React.CSSProperties {
+    if (kind === "success") return { color: "#15803d", fontWeight: 700 };
+    if (kind === "error") return { color: "#dc2626", fontWeight: 700 };
+    if (kind === "saving" || kind === "loading") {
+      return { color: "var(--muted-strong)", fontWeight: 700 };
+    }
+    return { color: "var(--muted)", fontWeight: 600 };
   }
 
   const secondaryButtonStyle: React.CSSProperties = {
@@ -992,7 +1253,7 @@ export default function AdminPage() {
               marginTop: 4,
             }}
           >
-            Quản lý lesson theo dạng accordion. Slide đã save thật, prelearning đã save thật vào question_bank.
+            Slide, truth source, prelearning, theory, practice đều load/save qua DB.
           </div>
         </div>
 
@@ -1456,7 +1717,7 @@ export default function AdminPage() {
 
                           {sectionCard(
                             "2) Truth Source",
-                            "Paste lesson knowledge text here. Chưa save thật xuống Supabase ở phiên bản này.",
+                            "Paste lesson knowledge text here. 1 lesson = 1 row in lesson_truth.",
                             <div>
                               <textarea
                                 value={getDraft(l.id).truthSource}
@@ -1470,7 +1731,7 @@ export default function AdminPage() {
                                 placeholder="Paste truth source / lesson notes here..."
                                 style={{
                                   width: "100%",
-                                  minHeight: 150,
+                                  minHeight: 180,
                                   resize: "vertical",
                                   borderRadius: 14,
                                   border: "1px solid var(--border)",
@@ -1478,7 +1739,7 @@ export default function AdminPage() {
                                   color: "var(--foreground)",
                                   padding: 12,
                                   fontFamily: UI_FONT,
-                                  lineHeight: 1.5,
+                                  lineHeight: 1.6,
                                 }}
                               />
 
@@ -1493,18 +1754,22 @@ export default function AdminPage() {
                               >
                                 <button
                                   onClick={() => saveSectionDraft(l, "truthSource")}
-                                  style={secondaryButtonStyle}
+                                  style={{
+                                    ...secondaryButtonStyle,
+                                    opacity: busy ? 0.55 : 1,
+                                    cursor: busy ? "not-allowed" : "pointer",
+                                  }}
+                                  disabled={busy}
                                 >
-                                  Save Truth Source
+                                  {busy ? "Saving..." : "Save Truth Source"}
                                 </button>
 
                                 <div
-                                  style={{
-                                    fontSize: 12,
-                                    color: "var(--muted)",
-                                  }}
+                                  style={statusTextStyle(
+                                    getSectionStatus(l.id, "truthSource").kind
+                                  )}
                                 >
-                                  Draft only ở bản này.
+                                  {getSectionStatus(l.id, "truthSource").text}
                                 </div>
                               </div>
                             </div>
@@ -1512,7 +1777,7 @@ export default function AdminPage() {
 
                           {sectionCard(
                             "3) Prelearning Quiz Import",
-                            "Paste JSON array for prelearning question bank.",
+                            "Paste JSON array for prelearning question bank. Save = replace current set.",
                             <div>
                               <textarea
                                 value={getDraft(l.id).prelearningJson}
@@ -1526,7 +1791,7 @@ export default function AdminPage() {
                                 placeholder={`[\n  {\n    "question_text": "Choose the correct answer",\n    "instruction_vi": "Chọn đáp án đúng",\n    "instruction_en": "Choose the correct answer",\n    "sentence_en": "She ___ to school every day.",\n    "options": ["go", "goes", "going", "went"],\n    "answer_index": 1,\n    "explanation_vi": "Với she, động từ thêm -s/-es.",\n    "skill_tag": "present_simple_s_es",\n    "difficulty": "easy",\n    "is_active": true\n  }\n]`}
                                 style={{
                                   width: "100%",
-                                  minHeight: 180,
+                                  minHeight: 220,
                                   resize: "vertical",
                                   borderRadius: 14,
                                   border: "1px solid var(--border)",
@@ -1596,23 +1861,31 @@ export default function AdminPage() {
                                 >
                                   {busy ? "Saving..." : "Save Prelearning"}
                                 </button>
+
+                                <div
+                                  style={statusTextStyle(
+                                    getSectionStatus(l.id, "prelearningJson").kind
+                                  )}
+                                >
+                                  {getSectionStatus(l.id, "prelearningJson").text}
+                                </div>
                               </div>
                             </div>
                           )}
 
                           {sectionCard(
                             "4) Theory Questions Import",
-                            "Paste JSON array for theory question bank.",
+                            "Paste JSON array for theory bank. Save = replace current set.",
                             <div>
                               <textarea
                                 value={getDraft(l.id).theoryJson}
                                 onChange={(e) =>
                                   updateLessonDraft(l.id, "theoryJson", e.target.value)
                                 }
-                                placeholder={`[\n  {\n    "question_text": "Theory question...",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0\n  }\n]`}
+                                placeholder={`[\n  {\n    "question_text": "Theory question...",\n    "instruction_vi": "Chọn đáp án đúng",\n    "instruction_en": "Choose the correct answer",\n    "sentence_en": "Example sentence",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0,\n    "explanation_vi": "Giải thích ngắn",\n    "skill_tag": "theory_tag",\n    "difficulty": "easy",\n    "is_active": true\n  }\n]`}
                                 style={{
                                   width: "100%",
-                                  minHeight: 180,
+                                  minHeight: 220,
                                   resize: "vertical",
                                   borderRadius: 14,
                                   border: "1px solid var(--border)",
@@ -1642,24 +1915,42 @@ export default function AdminPage() {
                                       `${l.title} — Theory Questions`
                                     )
                                   }
-                                  style={secondaryButtonStyle}
+                                  style={{
+                                    ...secondaryButtonStyle,
+                                    opacity: busy ? 0.55 : 1,
+                                    cursor: busy ? "not-allowed" : "pointer",
+                                  }}
+                                  disabled={busy}
                                 >
                                   Validate JSON
                                 </button>
 
                                 <button
                                   onClick={() => saveSectionDraft(l, "theoryJson")}
-                                  style={secondaryButtonStyle}
+                                  style={{
+                                    ...secondaryButtonStyle,
+                                    opacity: busy ? 0.55 : 1,
+                                    cursor: busy ? "not-allowed" : "pointer",
+                                  }}
+                                  disabled={busy}
                                 >
-                                  Save Theory
+                                  {busy ? "Saving..." : "Save Theory"}
                                 </button>
+
+                                <div
+                                  style={statusTextStyle(
+                                    getSectionStatus(l.id, "theoryJson").kind
+                                  )}
+                                >
+                                  {getSectionStatus(l.id, "theoryJson").text}
+                                </div>
                               </div>
                             </div>
                           )}
 
                           {sectionCard(
                             "5) Practice Questions Import",
-                            "Paste JSON array for practice question bank.",
+                            "Paste JSON array for practice bank. Save = replace current set.",
                             <div>
                               <textarea
                                 value={getDraft(l.id).practiceJson}
@@ -1670,10 +1961,10 @@ export default function AdminPage() {
                                     e.target.value
                                   )
                                 }
-                                placeholder={`[\n  {\n    "question_text": "Practice question...",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0\n  }\n]`}
+                                placeholder={`[\n  {\n    "question_text": "Practice question...",\n    "instruction_vi": "Chọn đáp án đúng",\n    "instruction_en": "Choose the correct answer",\n    "sentence_en": "Example sentence",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0,\n    "explanation_vi": "Giải thích ngắn",\n    "skill_tag": "practice_tag",\n    "difficulty": "easy",\n    "is_active": true\n  }\n]`}
                                 style={{
                                   width: "100%",
-                                  minHeight: 180,
+                                  minHeight: 220,
                                   resize: "vertical",
                                   borderRadius: 14,
                                   border: "1px solid var(--border)",
@@ -1703,7 +1994,12 @@ export default function AdminPage() {
                                       `${l.title} — Practice Questions`
                                     )
                                   }
-                                  style={secondaryButtonStyle}
+                                  style={{
+                                    ...secondaryButtonStyle,
+                                    opacity: busy ? 0.55 : 1,
+                                    cursor: busy ? "not-allowed" : "pointer",
+                                  }}
+                                  disabled={busy}
                                 >
                                   Validate JSON
                                 </button>
@@ -1712,10 +2008,23 @@ export default function AdminPage() {
                                   onClick={() =>
                                     saveSectionDraft(l, "practiceJson")
                                   }
-                                  style={secondaryButtonStyle}
+                                  style={{
+                                    ...secondaryButtonStyle,
+                                    opacity: busy ? 0.55 : 1,
+                                    cursor: busy ? "not-allowed" : "pointer",
+                                  }}
+                                  disabled={busy}
                                 >
-                                  Save Practice
+                                  {busy ? "Saving..." : "Save Practice"}
                                 </button>
+
+                                <div
+                                  style={statusTextStyle(
+                                    getSectionStatus(l.id, "practiceJson").kind
+                                  )}
+                                >
+                                  {getSectionStatus(l.id, "practiceJson").text}
+                                </div>
                               </div>
                             </div>
                           )}
@@ -1738,13 +2047,13 @@ export default function AdminPage() {
           lineHeight: 1.6,
         }}
       >
-        Lưu ý: Nếu bạn đang dùng Storage policy “tutor-only write”, admin sẽ bị
-        chặn upload.
+        Lưu ý:
         <br />
-        Nếu upload báo permission denied, bạn cần sửa policy WRITE để cho phép
-        role=admin.
+        - Truth Source lưu kiểu 1 lesson = 1 row trong lesson_truth.
         <br />
-        Truth / Theory / Practice vẫn là UI draft. Prelearning đã save thật xuống question_bank.
+        - Prelearning / Theory / Practice lưu kiểu replace set trong question_bank.
+        <br />
+        - F5 sẽ load lại nội dung đã lưu từ DB.
       </div>
     </div>
   );
