@@ -1,96 +1,141 @@
 /* ===============================
    app/globals.css
-   LIP – Light theme chuẩn
+   LIP – WAT-based global theme
    =============================== */
 
 @import "tailwindcss";
 
-/* ===== Reset ===== */
-html,
-body {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  background: #f6f7fb !important; /* nền chính */
-  color: #0f172a !important; /* text primary */
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
-    Helvetica, Arial;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* ===== Core light tokens ===== */
 :root {
-  /* Backgrounds */
-  --bg-main: #f6f7fb;
-  --bg-elev: #ffffff;
-  --bg-soft: #f1f5f9;
+  --background: #eef3f9;
+  --foreground: #0f172a;
 
-  /* Text */
-  --text-primary: #0f172a;
-  --text-muted: #475569;
-  --text-faint: #64748b;
+  --surface: #ffffff;
+  --surface-soft: #f8fbff;
+  --surface-muted: #e9eff7;
 
-  /* Borders & shadow */
-  --border: rgba(15, 23, 42, 0.12);
-  --border-strong: rgba(15, 23, 42, 0.18);
-  --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
-  --shadow-strong: 0 18px 60px rgba(15, 23, 42, 0.12);
+  --border: #d8e2ee;
+  --border-strong: #c4d2e3;
 
-  /* Brand */
-  --primary: #2563eb;
-  --primary-weak: rgba(37, 99, 235, 0.12);
+  --accent: #3b82f6;
+  --accent-hover: #2f6fe0;
+  --accent-pressed: #1d4ed8;
+  --accent-soft: #dbeafe;
 
-  /* Buttons */
+  --muted: #64748b;
+  --muted-strong: #475569;
+
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 18px 40px rgba(15, 23, 42, 0.08);
+
+  --button-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.24) inset,
+    0 6px 16px rgba(59, 130, 246, 0.18),
+    0 2px 6px rgba(15, 23, 42, 0.06);
+
+  --button-shadow-hover:
+    0 1px 0 rgba(255, 255, 255, 0.3) inset,
+    0 8px 20px rgba(59, 130, 246, 0.22),
+    0 3px 8px rgba(15, 23, 42, 0.08);
+
+  --button-shadow-pressed:
+    0 1px 0 rgba(255, 255, 255, 0.18) inset,
+    0 4px 10px rgba(59, 130, 246, 0.16),
+    0 2px 4px rgba(15, 23, 42, 0.06);
+
+  --button-secondary-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 4px 12px rgba(15, 23, 42, 0.04);
+
+  --button-secondary-shadow-hover:
+    0 1px 0 rgba(255, 255, 255, 0.92) inset,
+    0 6px 14px rgba(15, 23, 42, 0.06);
+
+  /* ===== LIP compatibility aliases ===== */
+  --bg-main: var(--background);
+  --bg-elev: var(--surface);
+  --bg-soft: var(--surface-soft);
+
+  --text-primary: var(--foreground);
+  --text-muted: var(--muted-strong);
+  --text-faint: var(--muted);
+
+  --primary: var(--accent);
+  --primary-weak: rgba(59, 130, 246, 0.12);
+
   --btn-bg: rgba(15, 23, 42, 0.04);
   --btn-border: rgba(15, 23, 42, 0.14);
 
-  --btn-primary-bg: rgba(37, 99, 235, 0.12);
-  --btn-primary-border: rgba(37, 99, 235, 0.3);
+  --btn-primary-bg: rgba(59, 130, 246, 0.12);
+  --btn-primary-border: rgba(59, 130, 246, 0.3);
 
-  /* Status */
-  --danger: #dc2626;
   --warn-border: rgba(245, 158, 11, 0.35);
   --warn-bg: rgba(245, 158, 11, 0.12);
 
   --success-border: rgba(34, 197, 94, 0.35);
   --success-bg: rgba(34, 197, 94, 0.1);
+
+  --shadow: var(--shadow-md);
+  --shadow-strong: 0 18px 60px rgba(15, 23, 42, 0.12);
 }
 
-/* =========================================
-   LIP alias tokens (StudentDashboard dùng)
-   ========================================= */
+/* Tailwind theme bridge */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
 
+  --color-surface: var(--surface);
+  --color-surface-soft: var(--surface-soft);
+  --color-surface-muted: var(--surface-muted);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-mono:
+    "SFMono-Regular", ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Monaco,
+    Consolas, "Liberation Mono", monospace;
+}
+
+/* ===== LIP alias tokens used by older screens ===== */
 :root {
-  /* Text */
   --lip-text: var(--text-primary);
   --lip-text-muted: var(--text-muted);
 
-  /* Surfaces */
   --lip-surface-0: var(--bg-elev);
   --lip-surface-1: var(--bg-soft);
   --lip-surface-2: rgba(15, 23, 42, 0.03);
 
-  /* Borders */
-  --lip-border: var(--border);
-  --lip-border-strong: var(--border-strong);
-  --lip-divider: var(--border);
+  --lip-border: rgba(15, 23, 42, 0.1);
+  --lip-border-strong: rgba(15, 23, 42, 0.16);
+  --lip-divider: rgba(15, 23, 42, 0.1);
 
-  /* Shadows */
   --lip-shadow: var(--shadow);
   --lip-shadow-strong: var(--shadow-strong);
 
-  /* CTA */
   --lip-cta-bg: var(--btn-primary-bg);
 
-  /* Modal / overlay */
   --lip-overlay: rgba(15, 23, 42, 0.28);
   --lip-modal-bg: var(--bg-elev);
 
-  /* Status */
   --lip-warn-border: var(--warn-border);
   --lip-warn-bg: var(--warn-bg);
 
@@ -101,7 +146,274 @@ body {
   --lip-error: var(--danger);
 }
 
-/* Selection */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 28%),
+    linear-gradient(180deg, #f4f8fc 0%, var(--background) 22%, #ecf2f8 100%);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  letter-spacing: -0.01em;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
 ::selection {
-  background: rgba(37, 99, 235, 0.18);
+  background: rgba(59, 130, 246, 0.18);
+  color: var(--foreground);
+}
+
+/* ===== Reusable WAT-style utility classes ===== */
+
+.wat-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top center, rgba(59, 130, 246, 0.06), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(238, 243, 249, 0.82));
+}
+
+.wat-card {
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 255, 0.96));
+  box-shadow: var(--shadow-md);
+  border-radius: 24px;
+}
+
+.wat-card-soft {
+  border: 1px solid rgba(216, 226, 238, 0.9);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow-sm);
+  border-radius: 20px;
+  backdrop-filter: blur(10px);
+}
+
+.wat-panel {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: var(--shadow-sm);
+  border-radius: 18px;
+}
+
+.wat-button-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  border: 1px solid rgba(29, 78, 216, 0.2);
+  border-radius: 17px;
+  padding: 0.68rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1;
+  color: #ffffff;
+  background: linear-gradient(180deg, #4d8df7 0%, var(--accent) 48%, var(--accent-pressed) 100%);
+  box-shadow: var(--button-shadow);
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.wat-button-primary:hover {
+  background: linear-gradient(180deg, #5a97f8 0%, var(--accent-hover) 52%, var(--accent-pressed) 100%);
+  box-shadow: var(--button-shadow-hover);
+  transform: translateY(-1px);
+}
+
+.wat-button-primary:active {
+  transform: translateY(1px);
+  box-shadow: var(--button-shadow-pressed);
+}
+
+.wat-button-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 42px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  padding: 0.62rem 0.95rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--foreground);
+  background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+  box-shadow: var(--button-secondary-shadow);
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.wat-button-secondary:hover {
+  transform: translateY(-1px);
+  border-color: #b4c7de;
+  box-shadow: var(--button-secondary-shadow-hover);
+  background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+}
+
+.wat-button-secondary:active {
+  transform: translateY(1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.wat-input,
+.wat-select,
+.wat-textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--foreground);
+  padding: 0.9rem 1rem;
+  outline: none;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.75) inset,
+    0 2px 8px rgba(15, 23, 42, 0.03);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.wat-textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.wat-input::placeholder,
+.wat-textarea::placeholder {
+  color: #94a3b8;
+}
+
+.wat-input:focus,
+.wat-select:focus,
+.wat-textarea:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow:
+    0 0 0 4px rgba(59, 130, 246, 0.12),
+    0 8px 18px rgba(59, 130, 246, 0.08);
+  background: #ffffff;
+}
+
+.wat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  padding: 0.38rem 0.72rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.wat-badge-neutral {
+  background: #eaf0f7;
+  color: #41556f;
+}
+
+.wat-badge-accent {
+  background: var(--accent-soft);
+  color: var(--accent-pressed);
+}
+
+.wat-badge-warning {
+  background: #fff3da;
+  color: #b96a00;
+}
+
+.wat-badge-success {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.wat-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(196, 210, 227, 0.9), transparent);
+}
+
+.wat-grid-bg {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: center;
+}
+
+.wat-muted {
+  color: var(--muted);
+}
+
+.wat-heading {
+  color: var(--foreground);
+  letter-spacing: -0.03em;
+}
+
+.wat-subheading {
+  color: var(--muted-strong);
+}
+
+@media (max-width: 768px) {
+  .wat-card {
+    border-radius: 20px;
+  }
+
+  .wat-card-soft,
+  .wat-panel {
+    border-radius: 16px;
+  }
+
+  .wat-button-primary {
+    min-height: 42px;
+    border-radius: 15px;
+    padding: 0.62rem 0.92rem;
+  }
+
+  .wat-button-secondary {
+    min-height: 40px;
+    border-radius: 15px;
+    padding: 0.58rem 0.9rem;
+  }
+
+  .wat-input,
+  .wat-select,
+  .wat-textarea {
+    border-radius: 14px;
+  }
 }
