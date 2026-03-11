@@ -21,8 +21,22 @@ type LessonRow = {
   slide_updated_at: string | null;
 };
 
+type LessonDraft = {
+  truthSource: string;
+  prelearningJson: string;
+  theoryJson: string;
+  practiceJson: string;
+};
+
 const UI_FONT =
   'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"';
+
+const EMPTY_DRAFT: LessonDraft = {
+  truthSource: "",
+  prelearningJson: "",
+  theoryJson: "",
+  practiceJson: "",
+};
 
 export default function AdminPage() {
   const router = useRouter();
@@ -34,6 +48,11 @@ export default function AdminPage() {
   const [lessons, setLessons] = useState<LessonRow[]>([]);
   const [busyLessonId, setBusyLessonId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>("");
+
+  // accordion
+  const [expandedLessonId, setExpandedLessonId] = useState<string | null>(null);
+  const [lessonDrafts, setLessonDrafts] = useState<Record<string, LessonDraft>>({});
+  const [addingLesson, setAddingLesson] = useState(false);
 
   // ✅ Viewer state (Admin can view slide)
   const [viewOpen, setViewOpen] = useState(false);
@@ -110,6 +129,7 @@ export default function AdminPage() {
     (async () => {
       if (!selectedClassId) {
         setLessons([]);
+        setExpandedLessonId(null);
         return;
       }
       setMsg("");
@@ -126,9 +146,24 @@ export default function AdminPage() {
         return;
       }
 
-      setLessons((data as LessonRow[]) ?? []);
+      const nextLessons = (data as LessonRow[]) ?? [];
+      setLessons(nextLessons);
+
+      setLessonDrafts((prev) => {
+        const next = { ...prev };
+        for (const lesson of nextLessons) {
+          if (!next[lesson.id]) {
+            next[lesson.id] = { ...EMPTY_DRAFT };
+          }
+        }
+        return next;
+      });
+
+      if (nextLessons.length > 0 && !expandedLessonId) {
+        setExpandedLessonId(nextLessons[0].id);
+      }
     })();
-  }, [selectedClassId]);
+  }, [selectedClassId, expandedLessonId]);
 
   // ✅ Close viewer on ESC
   useEffect(() => {
@@ -154,8 +189,189 @@ export default function AdminPage() {
     setViewLoading(false);
   }
 
-  function isPdfPath(path: string) {
-    return path.toLowerCase().endsWith(".pdf");
+  function getDraft(lessonId: string): LessonDraft {
+    return lessonDrafts[lessonId] ?? { ...EMPTY_DRAFT };
+  }
+
+  function updateLessonDraft(
+    lessonId: string,
+    key: keyof LessonDraft,
+    value: string
+  ) {
+    setLessonDrafts((prev) => ({
+      ...prev,
+      [lessonId]: {
+        ...(prev[lessonId] ?? { ...EMPTY_DRAFT }),
+        [key]: value,
+      },
+    }));
+  }
+
+  function getContentSummary(lessonId: string) {
+    const draft = getDraft(lessonId);
+
+    const truthState = draft.truthSource.trim() ? "Filled" : "Empty";
+
+    const prelearningState = (() => {
+      const raw = draft.prelearningJson.trim();
+      if (!raw) return "Empty";
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? `${parsed.length} items` : "Filled";
+      } catch {
+        return "Draft";
+      }
+    })();
+
+    const theoryState = (() => {
+      const raw = draft.theoryJson.trim();
+      if (!raw) return "Empty";
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? `${parsed.length} items` : "Filled";
+      } catch {
+        return "Draft";
+      }
+    })();
+
+    const practiceState = (() => {
+      const raw = draft.practiceJson.trim();
+      if (!raw) return "Empty";
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? `${parsed.length} items` : "Filled";
+      } catch {
+        return "Draft";
+      }
+    })();
+
+    return {
+      truthState,
+      prelearningState,
+      theoryState,
+      practiceState,
+    };
+  }
+
+  async function addLesson() {
+    if (!selectedClassId) return;
+
+    setAddingLesson(true);
+    setMsg("");
+
+    try {
+      const nextOrder =
+        lessons.length > 0
+          ? Math.max(...lessons.map((l) => l.order_index)) + 1
+          : 1;
+
+      const defaultTitle = `Lesson ${nextOrder}`;
+
+      const { data, error } = await supabase
+        .from("lessons")
+        .insert({
+          class_id: selectedClassId,
+          title: defaultTitle,
+          order_index: nextOrder,
+        })
+        .select("id,class_id,title,order_index,slide_path,slide_updated_at")
+        .single();
+
+      if (error || !data) {
+        setMsg("Tạo lesson lỗi: " + (error?.message ?? "unknown"));
+        return;
+      }
+
+      const newLesson = data as LessonRow;
+      const nextLessons = [...lessons, newLesson].sort(
+        (a, b) => a.order_index - b.order_index
+      );
+
+      setLessons(nextLessons);
+      setLessonDrafts((prev) => ({
+        ...prev,
+        [newLesson.id]: { ...EMPTY_DRAFT },
+      }));
+      setExpandedLessonId(newLesson.id);
+      setMsg(`✅ Đã tạo lesson mới: ${newLesson.title}`);
+    } finally {
+      setAddingLesson(false);
+    }
+  }
+
+  function toggleLessonRow(lessonId: string) {
+    setExpandedLessonId((prev) => (prev === lessonId ? null : lessonId));
+  }
+
+  function validateJsonArray(raw: string, sectionLabel: string): boolean {
+    const text = raw.trim();
+
+    if (!text) {
+      setMsg(`⚠️ ${sectionLabel} đang trống.`);
+      return false;
+    }
+
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) {
+        setMsg(`❌ ${sectionLabel} phải là JSON array.`);
+        return false;
+      }
+      setMsg(`✅ ${sectionLabel} hợp lệ. Tìm thấy ${parsed.length} item.`);
+      return true;
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      setMsg(`❌ ${sectionLabel} không phải JSON hợp lệ.\n${detail}`);
+      return false;
+    }
+  }
+
+  function saveSectionDraft(
+    lesson: LessonRow,
+    section: "truthSource" | "prelearningJson" | "theoryJson" | "practiceJson"
+  ) {
+    const draft = getDraft(lesson.id);
+
+    if (section === "truthSource") {
+      if (!draft.truthSource.trim()) {
+        setMsg(`⚠️ ${lesson.title} — Truth Source đang trống.`);
+        return;
+      }
+      setMsg(
+        `ℹ️ ${lesson.title} — UI đã sẵn cho Truth Source.\nHiện phần này mới lưu draft trên màn hình, chưa save xuống Supabase vì bạn chưa tạo bảng content bank.`
+      );
+      return;
+    }
+
+    if (section === "prelearningJson") {
+      if (!validateJsonArray(draft.prelearningJson, `${lesson.title} — Prelearning Quiz`)) {
+        return;
+      }
+      setMsg(
+        `ℹ️ ${lesson.title} — Prelearning Quiz JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase vì bạn chưa tạo bảng prelearning question bank.`
+      );
+      return;
+    }
+
+    if (section === "theoryJson") {
+      if (!validateJsonArray(draft.theoryJson, `${lesson.title} — Theory Questions`)) {
+        return;
+      }
+      setMsg(
+        `ℹ️ ${lesson.title} — Theory Questions JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase vì bạn chưa tạo bảng theory question bank.`
+      );
+      return;
+    }
+
+    if (section === "practiceJson") {
+      if (!validateJsonArray(draft.practiceJson, `${lesson.title} — Practice Questions`)) {
+        return;
+      }
+      setMsg(
+        `ℹ️ ${lesson.title} — Practice Questions JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase vì bạn chưa tạo bảng practice question bank.`
+      );
+      return;
+    }
   }
 
   async function openSlideViewer(lesson: LessonRow) {
@@ -172,10 +388,9 @@ export default function AdminPage() {
     setViewLoading(true);
 
     try {
-      // ✅ Use signed URL (bucket thường private)
       const { data, error } = await supabase.storage
         .from("slides")
-        .createSignedUrl(lesson.slide_path, 60 * 10); // 10 phút
+        .createSignedUrl(lesson.slide_path, 60 * 10);
 
       if (error || !data?.signedUrl) {
         setMsg("Tạo signed URL lỗi: " + (error?.message ?? "unknown"));
@@ -217,7 +432,6 @@ export default function AdminPage() {
     setMsg("");
 
     try {
-      // ✅ Enforce format: class_<classId>/lesson_<lessonId>.<ext>
       const ext = (() => {
         const lower = file.name.toLowerCase();
         if (lower.endsWith(".pdf")) return "pdf";
@@ -244,7 +458,6 @@ export default function AdminPage() {
         .update({
           slide_path: path,
           slide_updated_at: nowIso,
-          // slide_updated_by may or may not exist in schema; keep it if your DB has it.
           slide_updated_by: meId,
         })
         .eq("id", lesson.id);
@@ -254,7 +467,6 @@ export default function AdminPage() {
         return;
       }
 
-      // refresh list quickly
       setLessons((prev) =>
         prev.map((l) =>
           l.id === lesson.id ? { ...l, slide_path: path, slide_updated_at: nowIso } : l
@@ -282,7 +494,6 @@ export default function AdminPage() {
     setLessons((data as LessonRow[]) ?? []);
   }
 
-  // ✅ MVP BEST: Clone lessons + slide_path from template class (LIP-EL-001) to selected class
   async function cloneFromTemplate() {
     if (!selectedClassId) return;
     if (!templateClass) {
@@ -294,7 +505,6 @@ export default function AdminPage() {
       return;
     }
 
-    // If selected class already has lessons -> confirm replace
     const hasExisting = lessons.length > 0;
     if (hasExisting) {
       const ok = window.confirm(
@@ -309,7 +519,6 @@ export default function AdminPage() {
     setMsg("");
 
     try {
-      // 1) Load template lessons
       const { data: tplLessons, error: tplErr } = await supabase
         .from("lessons")
         .select("id,class_id,title,order_index,slide_path,slide_updated_at")
@@ -327,7 +536,6 @@ export default function AdminPage() {
         return;
       }
 
-      // 2) Wipe target lessons (so target becomes exactly like template)
       if (hasExisting) {
         const { error: delErr } = await supabase.from("lessons").delete().eq("class_id", selectedClassId);
         if (delErr) {
@@ -336,8 +544,6 @@ export default function AdminPage() {
         }
       }
 
-      // 3) Insert cloned lessons (new IDs auto-generated by DB)
-      // Keep title/order_index/slide_path so classroom can present immediately.
       const insertRows = templateList.map((l) => ({
         class_id: selectedClassId,
         title: l.title,
@@ -353,6 +559,7 @@ export default function AdminPage() {
       }
 
       await reloadSelectedClassLessons();
+      setExpandedLessonId(null);
       setMsg(
         `✅ Clone thành công!\n` +
           `Nguồn: ${templateClass.name}\n` +
@@ -363,6 +570,27 @@ export default function AdminPage() {
     } finally {
       setCloneBusy(false);
     }
+  }
+
+  function sectionCard(
+    title: string,
+    subtitle: string,
+    children: React.ReactNode
+  ) {
+    return (
+      <div
+        style={{
+          border: "1px solid rgba(255,255,255,0.10)",
+          background: "rgba(255,255,255,0.03)",
+          borderRadius: 12,
+          padding: 12,
+        }}
+      >
+        <div style={{ fontWeight: 900 }}>{title}</div>
+        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{subtitle}</div>
+        <div style={{ marginTop: 12 }}>{children}</div>
+      </div>
+    );
   }
 
   if (loading) {
@@ -382,11 +610,9 @@ export default function AdminPage() {
 
   return (
     <div style={{ minHeight: "100vh", fontFamily: UI_FONT, padding: 20, background: "#070707", color: "white" }}>
-      {/* ✅ Admin Slide Viewer Modal */}
       {viewOpen ? (
         <div
           onMouseDown={(e) => {
-            // click overlay to close
             if (e.target === e.currentTarget) closeViewer();
           }}
           style={{
@@ -478,8 +704,7 @@ export default function AdminPage() {
                 </div>
               )}
 
-              {/* hint for non-pdf */}
-              {viewUrl && viewTitle && (
+              {viewUrl && viewTitle ? (
                 <div
                   style={{
                     position: "absolute",
@@ -495,7 +720,7 @@ export default function AdminPage() {
                 >
                   Tip: PDF sẽ xem trực tiếp. PPT/PPTX có thể tải xuống tuỳ trình duyệt.
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
@@ -504,7 +729,9 @@ export default function AdminPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 900 }}>🛠️ Admin Dashboard</div>
-          <div style={{ opacity: 0.75, marginTop: 4 }}>Upload slide bài giảng theo Lesson (bucket: slides)</div>
+          <div style={{ opacity: 0.75, marginTop: 4 }}>
+            Quản lý lesson theo dạng accordion. Slide đã save thật, các content bank đang ở bước UI draft.
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -606,15 +833,32 @@ export default function AdminPage() {
             minHeight: 240,
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
             <div>
               <div style={{ fontWeight: 900 }}>Lessons</div>
               <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>
                 Class: <span style={{ opacity: 0.95 }}>{selectedClass?.name ?? "—"}</span>
               </div>
 
-              {/* ✅ MVP clone control */}
               <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  disabled={addingLesson || !selectedClassId}
+                  onClick={addLesson}
+                  style={{
+                    height: 34,
+                    padding: "0 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.18)",
+                    background: "rgba(255,255,255,0.06)",
+                    color: "white",
+                    cursor: addingLesson || !selectedClassId ? "not-allowed" : "pointer",
+                    fontWeight: 900,
+                    opacity: addingLesson || !selectedClassId ? 0.55 : 1,
+                  }}
+                >
+                  {addingLesson ? "Adding…" : "+ Add Lesson"}
+                </button>
+
                 <button
                   disabled={
                     cloneBusy ||
@@ -652,16 +896,16 @@ export default function AdminPage() {
                 >
                   {cloneBusy ? "Cloning…" : `📌 Clone from ${templateClass?.name ?? "LIP-EL-001"} (include slides)`}
                 </button>
+              </div>
 
-                <div style={{ fontSize: 12, opacity: 0.75, alignSelf: "center" }}>
-                  {templateClass ? (
-                    <>
-                      Template ID: <span style={{ opacity: 0.95 }}>{templateClass.id}</span>
-                    </>
-                  ) : (
-                    <>⚠️ Không tìm thấy class template tên “LIP-EL-001”.</>
-                  )}
-                </div>
+              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+                {templateClass ? (
+                  <>
+                    Template ID: <span style={{ opacity: 0.95 }}>{templateClass.id}</span>
+                  </>
+                ) : (
+                  <>⚠️ Không tìm thấy class template tên “LIP-EL-001”.</>
+                )}
               </div>
             </div>
 
@@ -670,7 +914,7 @@ export default function AdminPage() {
             </div>
           </div>
 
-          <div style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 14 }}>
             {lessons.length === 0 ? (
               <div style={{ opacity: 0.75 }}>(Chưa có lesson nào trong class này)</div>
             ) : (
@@ -678,6 +922,8 @@ export default function AdminPage() {
                 {lessons.map((l) => {
                   const busy = busyLessonId === l.id;
                   const hasSlide = !!l.slide_path;
+                  const expanded = expandedLessonId === l.id;
+                  const summary = getContentSummary(l.id);
 
                   return (
                     <div
@@ -686,99 +932,455 @@ export default function AdminPage() {
                         border: "1px solid rgba(255,255,255,0.10)",
                         background: "rgba(0,0,0,0.25)",
                         borderRadius: 12,
-                        padding: 12,
-                        display: "grid",
-                        gridTemplateColumns: "1fr 280px",
-                        gap: 12,
-                        alignItems: "center",
+                        overflow: "hidden",
                       }}
                     >
-                      <div>
-                        <div style={{ fontWeight: 900 }}>
-                          #{l.order_index} — {l.title}
-                        </div>
-                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                          slide_path: <span style={{ opacity: 0.95 }}>{l.slide_path ?? "—"}</span>
-                        </div>
-                        <div style={{ fontSize: 12, opacity: 0.65, marginTop: 2 }}>
-                          updated_at: <span style={{ opacity: 0.9 }}>{l.slide_updated_at ?? "—"}</span>
-                        </div>
+                      <button
+                        onClick={() => toggleLessonRow(l.id)}
+                        style={{
+                          width: "100%",
+                          textAlign: "left",
+                          background: "transparent",
+                          color: "white",
+                          border: "none",
+                          padding: 14,
+                          cursor: "pointer",
+                          display: "grid",
+                          gridTemplateColumns: "1fr auto",
+                          gap: 14,
+                          alignItems: "center",
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 900, fontSize: 18 }}>
+                            #{l.order_index} — {l.title}
+                          </div>
 
-                        {/* ✅ View buttons */}
-                        <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                          <button
-                            disabled={!hasSlide}
-                            onClick={() => openSlideViewer(l)}
+                          <div
                             style={{
-                              height: 34,
-                              padding: "0 12px",
-                              borderRadius: 10,
-                              border: "1px solid rgba(255,255,255,0.18)",
-                              background: hasSlide ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
-                              color: "white",
-                              cursor: hasSlide ? "pointer" : "not-allowed",
-                              fontWeight: 900,
-                              opacity: hasSlide ? 1 : 0.55,
+                              marginTop: 8,
+                              display: "flex",
+                              gap: 8,
+                              flexWrap: "wrap",
+                              fontSize: 12,
+                              opacity: 0.88,
                             }}
                           >
-                            👁️ Xem slide
-                          </button>
-
-                          <button
-                            disabled={!hasSlide}
-                            onClick={() => openSlideNewTab(l)}
-                            style={{
-                              height: 34,
-                              padding: "0 12px",
-                              borderRadius: 10,
-                              border: "1px solid rgba(255,255,255,0.18)",
-                              background: hasSlide ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
-                              color: "white",
-                              cursor: hasSlide ? "pointer" : "not-allowed",
-                              fontWeight: 900,
-                              opacity: hasSlide ? 1 : 0.55,
-                            }}
-                          >
-                            ↗ Open tab
-                          </button>
+                            <span
+                              style={{
+                                padding: "4px 8px",
+                                borderRadius: 999,
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                background: "rgba(255,255,255,0.04)",
+                              }}
+                            >
+                              Slide: {hasSlide ? "Uploaded" : "Empty"}
+                            </span>
+                            <span
+                              style={{
+                                padding: "4px 8px",
+                                borderRadius: 999,
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                background: "rgba(255,255,255,0.04)",
+                              }}
+                            >
+                              Truth: {summary.truthState}
+                            </span>
+                            <span
+                              style={{
+                                padding: "4px 8px",
+                                borderRadius: 999,
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                background: "rgba(255,255,255,0.04)",
+                              }}
+                            >
+                              Prelearning: {summary.prelearningState}
+                            </span>
+                            <span
+                              style={{
+                                padding: "4px 8px",
+                                borderRadius: 999,
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                background: "rgba(255,255,255,0.04)",
+                              }}
+                            >
+                              Theory: {summary.theoryState}
+                            </span>
+                            <span
+                              style={{
+                                padding: "4px 8px",
+                                borderRadius: 999,
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                background: "rgba(255,255,255,0.04)",
+                              }}
+                            >
+                              Practice: {summary.practiceState}
+                            </span>
+                          </div>
                         </div>
-                      </div>
 
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch" }}>
-                        <label
+                        <div
                           style={{
-                            display: "block",
-                            border: "1px dashed rgba(255,255,255,0.18)",
-                            borderRadius: 12,
-                            padding: 10,
-                            cursor: busy ? "not-allowed" : "pointer",
-                            opacity: busy ? 0.6 : 1,
-                            background: "rgba(255,255,255,0.03)",
+                            minWidth: 44,
+                            height: 44,
+                            borderRadius: 10,
+                            display: "grid",
+                            placeItems: "center",
+                            border: "1px solid rgba(255,255,255,0.14)",
+                            background: "rgba(255,255,255,0.04)",
+                            fontSize: 22,
+                            fontWeight: 900,
                           }}
                         >
-                          <div style={{ fontWeight: 800, marginBottom: 4 }}>
-                            {l.slide_path ? "Replace slide" : "Upload slide"}
-                          </div>
-                          <div style={{ fontSize: 12, opacity: 0.75 }}>Chọn file PDF (khuyến nghị)</div>
-                          <input
-                            type="file"
-                            accept=".pdf,.ppt,.pptx,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                            disabled={busy}
-                            style={{ display: "none" }}
-                            onChange={async (e) => {
-                              const f = e.target.files?.[0];
-                              e.currentTarget.value = ""; // allow reselect same file
-                              if (!f) return;
-                              await uploadSlide(l, f);
-                            }}
-                          />
-                        </label>
-
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>
-                          Bucket: <b>slides</b> <br />
-                          Target: <code>{`class_${selectedClassId}/lesson_${l.id}.pdf`}</code>
+                          {expanded ? "▾" : "▸"}
                         </div>
-                      </div>
+                      </button>
+
+                      {expanded ? (
+                        <div
+                          style={{
+                            borderTop: "1px solid rgba(255,255,255,0.08)",
+                            padding: 14,
+                            display: "grid",
+                            gap: 12,
+                          }}
+                        >
+                          {sectionCard(
+                            "1) Slide",
+                            "Upload / replace slide file for this lesson.",
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "1fr 320px",
+                                gap: 12,
+                              }}
+                            >
+                              <div>
+                                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                                  slide_path: <span style={{ opacity: 0.95 }}>{l.slide_path ?? "—"}</span>
+                                </div>
+                                <div style={{ fontSize: 12, opacity: 0.65, marginTop: 2 }}>
+                                  updated_at: <span style={{ opacity: 0.9 }}>{l.slide_updated_at ?? "—"}</span>
+                                </div>
+
+                                <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                  <button
+                                    disabled={!hasSlide}
+                                    onClick={() => openSlideViewer(l)}
+                                    style={{
+                                      height: 34,
+                                      padding: "0 12px",
+                                      borderRadius: 10,
+                                      border: "1px solid rgba(255,255,255,0.18)",
+                                      background: hasSlide ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
+                                      color: "white",
+                                      cursor: hasSlide ? "pointer" : "not-allowed",
+                                      fontWeight: 900,
+                                      opacity: hasSlide ? 1 : 0.55,
+                                    }}
+                                  >
+                                    👁️ Xem slide
+                                  </button>
+
+                                  <button
+                                    disabled={!hasSlide}
+                                    onClick={() => openSlideNewTab(l)}
+                                    style={{
+                                      height: 34,
+                                      padding: "0 12px",
+                                      borderRadius: 10,
+                                      border: "1px solid rgba(255,255,255,0.18)",
+                                      background: hasSlide ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
+                                      color: "white",
+                                      cursor: hasSlide ? "pointer" : "not-allowed",
+                                      fontWeight: 900,
+                                      opacity: hasSlide ? 1 : 0.55,
+                                    }}
+                                  >
+                                    ↗ Open tab
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                <label
+                                  style={{
+                                    display: "block",
+                                    border: "1px dashed rgba(255,255,255,0.18)",
+                                    borderRadius: 12,
+                                    padding: 10,
+                                    cursor: busy ? "not-allowed" : "pointer",
+                                    opacity: busy ? 0.6 : 1,
+                                    background: "rgba(255,255,255,0.03)",
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 800, marginBottom: 4 }}>
+                                    {l.slide_path ? "Replace slide" : "Upload slide"}
+                                  </div>
+                                  <div style={{ fontSize: 12, opacity: 0.75 }}>Chọn file PDF (khuyến nghị)</div>
+                                  <input
+                                    type="file"
+                                    accept=".pdf,.ppt,.pptx,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                                    disabled={busy}
+                                    style={{ display: "none" }}
+                                    onChange={async (e) => {
+                                      const f = e.target.files?.[0];
+                                      e.currentTarget.value = "";
+                                      if (!f) return;
+                                      await uploadSlide(l, f);
+                                    }}
+                                  />
+                                </label>
+
+                                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                                  Bucket: <b>slides</b>
+                                  <br />
+                                  Target: <code>{`class_${selectedClassId}/lesson_${l.id}.pdf`}</code>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {sectionCard(
+                            "2) Truth Source",
+                            "Paste lesson knowledge text here. Chưa save thật xuống Supabase ở phiên bản này.",
+                            <div>
+                              <textarea
+                                value={getDraft(l.id).truthSource}
+                                onChange={(e) => updateLessonDraft(l.id, "truthSource", e.target.value)}
+                                placeholder="Paste truth source / lesson notes here..."
+                                style={{
+                                  width: "100%",
+                                  minHeight: 150,
+                                  resize: "vertical",
+                                  borderRadius: 12,
+                                  border: "1px solid rgba(255,255,255,0.12)",
+                                  background: "rgba(0,0,0,0.24)",
+                                  color: "white",
+                                  padding: 12,
+                                  fontFamily: UI_FONT,
+                                  lineHeight: 1.5,
+                                }}
+                              />
+
+                              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                                <button
+                                  onClick={() => saveSectionDraft(l, "truthSource")}
+                                  style={{
+                                    height: 34,
+                                    padding: "0 12px",
+                                    borderRadius: 10,
+                                    border: "1px solid rgba(255,255,255,0.18)",
+                                    background: "rgba(255,255,255,0.06)",
+                                    color: "white",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  Save Truth Source
+                                </button>
+
+                                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                                  Draft only ở bản này.
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {sectionCard(
+                            "3) Prelearning Quiz Import",
+                            "Paste JSON array for prelearning question bank.",
+                            <div>
+                              <textarea
+                                value={getDraft(l.id).prelearningJson}
+                                onChange={(e) => updateLessonDraft(l.id, "prelearningJson", e.target.value)}
+                                placeholder={`[\n  {\n    "question_text": "Choose the correct answer",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0\n  }\n]`}
+                                style={{
+                                  width: "100%",
+                                  minHeight: 180,
+                                  resize: "vertical",
+                                  borderRadius: 12,
+                                  border: "1px solid rgba(255,255,255,0.12)",
+                                  background: "rgba(0,0,0,0.24)",
+                                  color: "white",
+                                  padding: 12,
+                                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                                  lineHeight: 1.5,
+                                  fontSize: 13,
+                                }}
+                              />
+
+                              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75, lineHeight: 1.6 }}>
+                                - Paste a JSON array
+                                <br />
+                                - Each item = 1 question
+                                <br />
+                                - Each question should have 4 options
+                                <br />
+                                - answer_index must be 0–3
+                              </div>
+
+                              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                                <button
+                                  onClick={() =>
+                                    validateJsonArray(getDraft(l.id).prelearningJson, `${l.title} — Prelearning Quiz`)
+                                  }
+                                  style={{
+                                    height: 34,
+                                    padding: "0 12px",
+                                    borderRadius: 10,
+                                    border: "1px solid rgba(255,255,255,0.18)",
+                                    background: "rgba(255,255,255,0.06)",
+                                    color: "white",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  Validate JSON
+                                </button>
+
+                                <button
+                                  onClick={() => saveSectionDraft(l, "prelearningJson")}
+                                  style={{
+                                    height: 34,
+                                    padding: "0 12px",
+                                    borderRadius: 10,
+                                    border: "1px solid rgba(255,255,255,0.18)",
+                                    background: "rgba(255,255,255,0.06)",
+                                    color: "white",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  Save Prelearning
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {sectionCard(
+                            "4) Theory Questions Import",
+                            "Paste JSON array for theory question bank.",
+                            <div>
+                              <textarea
+                                value={getDraft(l.id).theoryJson}
+                                onChange={(e) => updateLessonDraft(l.id, "theoryJson", e.target.value)}
+                                placeholder={`[\n  {\n    "question_text": "Theory question...",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0\n  }\n]`}
+                                style={{
+                                  width: "100%",
+                                  minHeight: 180,
+                                  resize: "vertical",
+                                  borderRadius: 12,
+                                  border: "1px solid rgba(255,255,255,0.12)",
+                                  background: "rgba(0,0,0,0.24)",
+                                  color: "white",
+                                  padding: 12,
+                                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                                  lineHeight: 1.5,
+                                  fontSize: 13,
+                                }}
+                              />
+
+                              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                                <button
+                                  onClick={() =>
+                                    validateJsonArray(getDraft(l.id).theoryJson, `${l.title} — Theory Questions`)
+                                  }
+                                  style={{
+                                    height: 34,
+                                    padding: "0 12px",
+                                    borderRadius: 10,
+                                    border: "1px solid rgba(255,255,255,0.18)",
+                                    background: "rgba(255,255,255,0.06)",
+                                    color: "white",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  Validate JSON
+                                </button>
+
+                                <button
+                                  onClick={() => saveSectionDraft(l, "theoryJson")}
+                                  style={{
+                                    height: 34,
+                                    padding: "0 12px",
+                                    borderRadius: 10,
+                                    border: "1px solid rgba(255,255,255,0.18)",
+                                    background: "rgba(255,255,255,0.06)",
+                                    color: "white",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  Save Theory
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {sectionCard(
+                            "5) Practice Questions Import",
+                            "Paste JSON array for practice question bank.",
+                            <div>
+                              <textarea
+                                value={getDraft(l.id).practiceJson}
+                                onChange={(e) => updateLessonDraft(l.id, "practiceJson", e.target.value)}
+                                placeholder={`[\n  {\n    "question_text": "Practice question...",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0\n  }\n]`}
+                                style={{
+                                  width: "100%",
+                                  minHeight: 180,
+                                  resize: "vertical",
+                                  borderRadius: 12,
+                                  border: "1px solid rgba(255,255,255,0.12)",
+                                  background: "rgba(0,0,0,0.24)",
+                                  color: "white",
+                                  padding: 12,
+                                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                                  lineHeight: 1.5,
+                                  fontSize: 13,
+                                }}
+                              />
+
+                              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                                <button
+                                  onClick={() =>
+                                    validateJsonArray(getDraft(l.id).practiceJson, `${l.title} — Practice Questions`)
+                                  }
+                                  style={{
+                                    height: 34,
+                                    padding: "0 12px",
+                                    borderRadius: 10,
+                                    border: "1px solid rgba(255,255,255,0.18)",
+                                    background: "rgba(255,255,255,0.06)",
+                                    color: "white",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  Validate JSON
+                                </button>
+
+                                <button
+                                  onClick={() => saveSectionDraft(l, "practiceJson")}
+                                  style={{
+                                    height: 34,
+                                    padding: "0 12px",
+                                    borderRadius: 10,
+                                    border: "1px solid rgba(255,255,255,0.18)",
+                                    background: "rgba(255,255,255,0.06)",
+                                    color: "white",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  Save Practice
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -792,6 +1394,8 @@ export default function AdminPage() {
         Lưu ý: Nếu bạn đang dùng Storage policy “tutor-only write”, admin sẽ bị chặn upload.
         <br />
         Nếu upload báo permission denied, bạn cần sửa policy WRITE để cho phép role=admin.
+        <br />
+        Các phần Truth / Prelearning / Theory / Practice hiện mới là UI draft để chốt workflow.
       </div>
     </div>
   );
