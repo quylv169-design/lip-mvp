@@ -53,13 +53,9 @@ type AttemptRow = {
   pre_quiz_total?: number | null;
   pre_quiz_correct?: number | null;
 
-  // Stored paths in DB
   notebook_image_urls?: string[] | null;
-
-  // Signed URLs from API
   notebook_images?: string[] | null;
 
-  // Quiz + questions detail
   quiz_payload?: any;
   quiz_answers?: number[] | null;
   questions?: string[] | null;
@@ -93,13 +89,13 @@ type ClassVM = {
   name: string;
   tutorName: string;
   joinCode: string | null;
-  scheduleText: string; // MVP placeholder
+  scheduleText: string;
 };
 
 type LessonVM = {
   id: string;
-  title: string; // cleaned title
-  rawTitle: string; // original from DB (for debugging if needed)
+  title: string;
+  rawTitle: string;
   order: number;
 
   slidePath: string | null;
@@ -142,10 +138,6 @@ function formatDuration(ms: number) {
   return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}`;
 }
 
-/**
- * Parse schedule string like: "20:00 • T3, T5, T7"
- * dow: 0=Sun(CN),1=Mon(T2)...6=Sat(T7)
- */
 function parseSchedule(
   scheduleText: string
 ): { hour: number; minute: number; dowSet: Set<number> } | null {
@@ -159,16 +151,14 @@ function parseSchedule(
   const minute = Math.max(0, Math.min(59, Number(timeMatch[2])));
 
   const dowSet = new Set<number>();
-
-  // Accept: "T3, T5, T7" and "CN"
   const raw = t.replace(/•/g, " ");
   const parts = raw.split(/[,]/).map((x) => x.trim().toUpperCase());
 
   for (const p of parts) {
     const m = p.match(/T\s*([2-7])/);
     if (m) {
-      const d = Number(m[1]); // 2..7
-      dowSet.add(d - 1); // T2->1 (Mon), ... T7->6 (Sat)
+      const d = Number(m[1]);
+      dowSet.add(d - 1);
       continue;
     }
     if (
@@ -176,12 +166,11 @@ function parseSchedule(
       p.includes("CHU NHAT") ||
       p.includes("CHỦ NHẬT")
     ) {
-      dowSet.add(0); // Sunday
+      dowSet.add(0);
       continue;
     }
   }
 
-  // fallback: if missing days, assume everyday (avoid crash)
   if (dowSet.size === 0) for (let i = 0; i < 7; i++) dowSet.add(i);
 
   return { hour, minute, dowSet };
@@ -214,10 +203,8 @@ function guessNameFromEmail(email?: string | null) {
   return local.trim();
 }
 
-/** Fix "Lesson 1: Lesson 1: Present Simple" by removing a leading "Lesson N:" from DB title */
 function stripLeadingLessonPrefix(title: string) {
   const t = String(title ?? "").trim();
-  // remove one-or-more leading "Lesson N:" blocks
   return t.replace(/^(?:lesson\s*\d+\s*:\s*)+/i, "").trim();
 }
 
@@ -238,14 +225,12 @@ function normalizeJoinCode(input: string) {
 
 function mapJoinRpcErrorMessage(errMsg: string) {
   const m = String(errMsg || "");
-  // Supabase thường bọc message kiểu: "JOIN_CODE_NOT_FOUND" hoặc "...: JOIN_CODE_NOT_FOUND"
   if (m.includes("JOIN_CODE_NOT_FOUND"))
     return "Join code không đúng hoặc lớp không tồn tại.";
   if (m.includes("CLASS_FULL")) return "Lớp đã đủ học sinh (tối đa 2).";
   return "";
 }
 
-// -------------------- AI FEEDBACK HELPERS (human-friendly render) --------------------
 type NormalizedAiFeedback = {
   notebook: string[];
   questions: string[];
@@ -277,7 +262,6 @@ function normalizeAiFeedback(raw: any): NormalizedAiFeedback {
 
   if (!raw || typeof raw !== "object") return out;
 
-  // Common key patterns we might see from different prompt versions
   const notebookKeys = [
     "notebook_feedback",
     "notebook",
@@ -318,12 +302,10 @@ function normalizeAiFeedback(raw: any): NormalizedAiFeedback {
     if (raw[k] != null) out.rewrite.push(...toStringList(raw[k]));
   }
 
-  // Some versions might nest under sections
   const sectionCandidates = ["sections", "feedback", "ai", "result"];
   for (const sk of sectionCandidates) {
     const sec = raw[sk];
     if (!sec || typeof sec !== "object") continue;
-    // try nested keys again
     for (const k of notebookKeys)
       if (sec[k] != null) out.notebook.push(...toStringList(sec[k]));
     for (const k of questionKeys)
@@ -332,7 +314,6 @@ function normalizeAiFeedback(raw: any): NormalizedAiFeedback {
       if (sec[k] != null) out.rewrite.push(...toStringList(sec[k]));
   }
 
-  // Dedup while keeping order
   const dedup = (arr: string[]) => {
     const seen = new Set<string>();
     const res: string[] = [];
@@ -349,7 +330,6 @@ function normalizeAiFeedback(raw: any): NormalizedAiFeedback {
   out.questions = dedup(out.questions);
   out.rewrite = dedup(out.rewrite);
 
-  // Any remaining keys we didn't map (for transparency/debug)
   const used = new Set<string>([
     ...notebookKeys,
     ...questionKeys,
@@ -392,50 +372,40 @@ export default function StudentDashboard() {
   const [expandedLessonId, setExpandedLessonId] = useState<string | null>(null);
   const [lessonTab, setLessonTab] = useState<LessonTab>("prelearning");
 
-  // Prelearning details modal
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLesson, setDetailLesson] = useState<LessonVM | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailErr, setDetailErr] = useState("");
 
-  // Lightbox
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState("");
-
-  // ✅ Lightbox "fit in view" (no scroll by default) + optional raw size
   const [lightboxNatural, setLightboxNatural] = useState<{
     w: number;
     h: number;
   } | null>(null);
 
-  // Slide modal
   const [slideOpen, setSlideOpen] = useState(false);
   const [slideLesson, setSlideLesson] = useState<LessonVM | null>(null);
   const [slideLoading, setSlideLoading] = useState(false);
   const [slideErr, setSlideErr] = useState("");
   const [slideUrl, setSlideUrl] = useState<string>("");
 
-  // ✅ Fullscreen for slide modal
   const slideFrameWrapRef = useRef<HTMLDivElement | null>(null);
   const [slideIsFullscreen, setSlideIsFullscreen] = useState(false);
 
-  // Vocabulary snapshot (MVP placeholder)
   const [vocabTotal] = useState(0);
   const [vocabMasteredPct] = useState(0);
 
-  // Join class by code (MVP)
   const [joinCodeInput, setJoinCodeInput] = useState("");
   const [joinLoading, setJoinLoading] = useState(false);
   const [joinMsg, setJoinMsg] = useState<string | null>(null);
 
-  // Countdown ticker
   const [nowTick, setNowTick] = useState<Date>(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNowTick(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  // --- Fullscreen helpers ---
   function getFullscreenElement(): Element | null {
     const d: any = document as any;
     return (document.fullscreenElement ||
@@ -455,7 +425,6 @@ export default function StudentDashboard() {
         return;
       }
       if (el.webkitRequestFullscreen) {
-        // Safari
         el.webkitRequestFullscreen();
         return;
       }
@@ -468,10 +437,8 @@ export default function StudentDashboard() {
         return;
       }
 
-      // fallback
       if (slideUrl) window.open(slideUrl, "_blank", "noopener,noreferrer");
     } catch {
-      // fallback (some browsers block programmatic fullscreen)
       if (slideUrl) window.open(slideUrl, "_blank", "noopener,noreferrer");
     }
   }
@@ -495,9 +462,7 @@ export default function StudentDashboard() {
         d.msExitFullscreen();
         return;
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   useEffect(() => {
@@ -520,13 +485,11 @@ export default function StudentDashboard() {
     };
   }, []);
 
-  // If modal closed while fullscreen, auto exit
   useEffect(() => {
     if (!slideOpen && slideIsFullscreen) {
       exitFullscreen();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slideOpen]);
+  }, [slideOpen, slideIsFullscreen]);
 
   async function fetchSlideSignedUrl(lessonId: string) {
     setSlideLoading(true);
@@ -647,8 +610,6 @@ export default function StudentDashboard() {
     const emailName = guessNameFromEmail(session.user.email ?? null);
     setUserEmailName(emailName);
 
-    // ✅ FIX: read profile from v_my_profile (auth.uid) and STOP client upsert
-    // - v_my_profile should be a VIEW (or function) that returns the current user's profile safely.
     try {
       const { data: meRow, error: meErr } = await supabase
         .from("v_my_profile")
@@ -657,7 +618,6 @@ export default function StudentDashboard() {
 
       if (meErr) {
         console.warn("[StudentDashboard] v_my_profile select error:", meErr);
-        // fallback: still allow UI to run with metaName/emailName
         setMe(null);
       } else {
         setMe((meRow as any) ?? null);
@@ -743,7 +703,7 @@ export default function StudentDashboard() {
         name: c.name,
         tutorName: tutorMap.get(c.tutor_id) ?? "Tutor",
         joinCode: c.join_code,
-        scheduleText: "20:00 • T3, T5, T7", // MVP placeholder
+        scheduleText: "20:00 • T3, T5, T7",
       }));
 
     setClasses(vms);
@@ -756,15 +716,10 @@ export default function StudentDashboard() {
     setBooting(false);
   }
 
-  // ----- AUTH + LOAD CLASSES -----
   useEffect(() => {
-    (async () => {
-      await loadStudentDashboardState();
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void loadStudentDashboardState();
   }, [router]);
 
-  // ----- LOAD LESSONS + LIGHT PRELEARNING SUMMARY + LATEST PRACTICE -----
   useEffect(() => {
     let cancelled = false;
 
@@ -802,7 +757,6 @@ export default function StudentDashboard() {
 
       const lessonIds = lessonList.map((l) => l.id);
 
-      // render skeleton-lessons ASAP with empty status first
       const quickLessonVMs: LessonVM[] = lessonList.map((l) => {
         const cleanedTitle = stripLeadingLessonPrefix(l.title);
         return {
@@ -838,7 +792,6 @@ export default function StudentDashboard() {
         return;
       }
 
-      // ✅ Prelearning attempts summary only (no signed notebook URLs here)
       const { data: preRows, error: preErr } = await supabase
         .from("prelearning_attempts")
         .select(
@@ -857,8 +810,6 @@ export default function StudentDashboard() {
         );
       }
 
-      // ✅ Practice attempts (latest per lesson)
-      // NOTE: practice_attempts has NO class_id column, so filter by student + lessonIds
       let practiceRows: PracticeAttemptRow[] = [];
       if (lessonIds.length > 0) {
         const { data: pracRows, error: pracErr } = await supabase
@@ -876,7 +827,6 @@ export default function StudentDashboard() {
             "[StudentDashboard] practice_attempts select error:",
             pracErr
           );
-          // không setErr cứng để tránh phá UI
         } else {
           practiceRows = (pracRows as any) ?? [];
         }
@@ -963,7 +913,6 @@ export default function StudentDashboard() {
     };
   }, [activeClass, nowTick]);
 
-  // ✅ FIX: ƯU TIÊN full_name trong profiles (v_my_profile), nếu chưa có thì dùng user_metadata, cuối cùng mới "Student"
   const displayName = useMemo(() => {
     const a = (me?.full_name ?? "").trim();
     if (a) return a;
@@ -1022,7 +971,6 @@ export default function StudentDashboard() {
     router.push("/login");
   }
 
-  // ✅ FIX: Join class via RPC (SECURITY DEFINER) to avoid RLS blocking select/insert
   async function joinClassByCode() {
     const code = normalizeJoinCode(joinCodeInput);
     setJoinMsg(null);
@@ -1039,8 +987,6 @@ export default function StudentDashboard() {
     setJoinLoading(true);
 
     try {
-      // Important: RPC function name must exist in Supabase:
-      // public.join_class_by_code(p_join_code text) returns uuid
       const { data, error } = await supabase.rpc("join_class_by_code", {
         p_join_code: code,
       });
@@ -1060,7 +1006,6 @@ export default function StudentDashboard() {
       setJoinMsg("✅ Join lớp thành công!");
       setJoinCodeInput("");
 
-      // Reload + focus new class
       await loadStudentDashboardState({ preferActiveClassId: classId });
       setActiveClassId(classId);
       setExpandedLessonId(null);
@@ -1080,7 +1025,6 @@ export default function StudentDashboard() {
 
     const summary = lesson.latestAttemptSummary;
 
-    // mở modal ngay với summary trước để UX không bị đứng
     setDetailLesson({
       ...lesson,
       latestAttempt:
@@ -1141,84 +1085,108 @@ export default function StudentDashboard() {
     }
   }
 
-  // ---------- STYLES ----------
   const styles: Record<string, React.CSSProperties> = {
     page: {
-      padding: 18,
+      minHeight: "100vh",
+      padding: 20,
       display: "flex",
       flexDirection: "column",
-      gap: 14,
+      gap: 16,
       fontFamily:
-        'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"',
-      color: "var(--lip-text, rgba(255,255,255,0.92))",
+        '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      color: "var(--foreground)",
+      background:
+        "radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 28%), linear-gradient(180deg, #f4f8fc 0%, var(--background) 22%, #ecf2f8 100%)",
     },
     topbar: {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: 12,
+      padding: "2px 2px 6px",
     },
-    title: { fontSize: 18, fontWeight: 950, letterSpacing: 0.2 },
-    subtitle: { fontSize: 12, opacity: 0.72 },
+    title: {
+      fontSize: 24,
+      fontWeight: 900,
+      letterSpacing: "-0.03em",
+      color: "var(--foreground)",
+    },
+    subtitle: {
+      fontSize: 13,
+      color: "var(--muted-strong)",
+    },
     row: { display: "flex", gap: 10, alignItems: "center" },
     select: {
-      height: 36,
-      borderRadius: 12,
-      border: "1px solid var(--lip-border-strong, rgba(255,255,255,0.18))",
-      background: "var(--lip-surface-1, rgba(255,255,255,0.06))",
-      color: "inherit",
-      padding: "0 10px",
-      fontWeight: 900,
-      fontSize: 12,
+      height: 42,
+      borderRadius: 16,
+      border: "1px solid var(--border)",
+      background: "rgba(255,255,255,0.94)",
+      color: "var(--foreground)",
+      padding: "0 12px",
+      fontWeight: 700,
+      fontSize: 13,
       cursor: "pointer",
       outline: "none",
+      boxShadow:
+        "0 1px 0 rgba(255,255,255,0.75) inset, 0 2px 8px rgba(15, 23, 42, 0.03)",
     },
     input: {
-      height: 40,
-      borderRadius: 12,
-      border: "1px solid var(--lip-border-strong, rgba(255,255,255,0.18))",
-      background: "var(--lip-surface-1, rgba(255,255,255,0.06))",
-      color: "inherit",
-      padding: "0 12px",
-      fontWeight: 900,
-      fontSize: 12,
+      height: 44,
+      borderRadius: 16,
+      border: "1px solid var(--border)",
+      background: "rgba(255,255,255,0.94)",
+      color: "var(--foreground)",
+      padding: "0 14px",
+      fontWeight: 700,
+      fontSize: 13,
       outline: "none",
       width: "100%",
+      boxShadow:
+        "0 1px 0 rgba(255,255,255,0.75) inset, 0 2px 8px rgba(15, 23, 42, 0.03)",
     },
     grid: {
       display: "grid",
       gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-      gap: 12,
+      gap: 14,
+      alignItems: "start",
     },
     col: {
-      borderRadius: 18,
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
-      background: "var(--lip-surface-0, rgba(255,255,255,0.04))",
-      padding: 14,
-      minHeight: 540,
+      borderRadius: 24,
+      border: "1px solid var(--border)",
+      background:
+        "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,251,255,0.96))",
+      padding: 16,
+      minHeight: 560,
       display: "flex",
       flexDirection: "column",
       gap: 12,
       overflow: "hidden",
-      boxShadow: "var(--lip-shadow, 0 10px 30px rgba(0,0,0,0.18))",
+      boxShadow: "var(--shadow-md)",
     },
     colHeader: {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: 10,
-      paddingBottom: 10,
-      borderBottom: "1px solid var(--lip-divider, rgba(255,255,255,0.08))",
+      paddingBottom: 12,
+      borderBottom: "1px solid rgba(216, 226, 238, 0.9)",
     },
-    colTitle: { fontSize: 13, fontWeight: 950, letterSpacing: 0.2 },
+    colTitle: {
+      fontSize: 13,
+      fontWeight: 950,
+      letterSpacing: "0.01em",
+      color: "var(--foreground)",
+    },
     pill: {
       fontSize: 11,
-      padding: "4px 10px",
+      padding: "5px 10px",
       borderRadius: 999,
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
-      background: "var(--lip-surface-1, rgba(255,255,255,0.06))",
-      opacity: 0.92,
+      border: "1px solid var(--border)",
+      background: "#eaf0f7",
+      color: "#41556f",
+      fontWeight: 700,
       whiteSpace: "nowrap",
+      boxShadow: "var(--shadow-sm)",
     },
 
     legendRow: {
@@ -1226,10 +1194,14 @@ export default function StudentDashboard() {
       justifyContent: "space-between",
       gap: 10,
       fontSize: 11,
-      opacity: 0.85,
+      color: "var(--muted-strong)",
     },
-    legendRight: { display: "flex", gap: 12, alignItems: "center" },
-    legendCol: { fontWeight: 950, opacity: 0.92 },
+    legendRight: {
+      display: "flex",
+      gap: 12,
+      alignItems: "center",
+      color: "var(--muted-strong)",
+    },
 
     list: {
       display: "flex",
@@ -1238,96 +1210,120 @@ export default function StudentDashboard() {
       overflow: "auto",
       paddingRight: 6,
     },
-    muted: { fontSize: 12, opacity: 0.78, lineHeight: 1.6 },
-    tiny: { fontSize: 11, opacity: 0.68, lineHeight: 1.5 },
+    muted: {
+      fontSize: 12,
+      color: "var(--muted-strong)",
+      lineHeight: 1.65,
+    },
+    tiny: {
+      fontSize: 11,
+      color: "var(--muted)",
+      lineHeight: 1.55,
+    },
     divider: {
       height: 1,
-      background: "var(--lip-divider, rgba(255,255,255,0.08))",
+      background:
+        "linear-gradient(90deg, transparent, rgba(196, 210, 227, 0.9), transparent)",
       width: "100%",
     },
-    chevron: { opacity: 0.6, fontWeight: 950 },
     expandPanel: {
-      borderRadius: 14,
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
-      background: "var(--lip-surface-2, rgba(0,0,0,0.18))",
+      borderRadius: 18,
+      border: "1px solid rgba(216, 226, 238, 0.9)",
+      background: "rgba(255,255,255,0.82)",
+      boxShadow: "var(--shadow-sm)",
       padding: 12,
       display: "flex",
       flexDirection: "column",
       gap: 10,
+      backdropFilter: "blur(10px)",
     },
     btnRow: { display: "flex", gap: 10, flexWrap: "wrap" },
     btnPrimary: {
-      borderRadius: 12,
-      padding: "10px 12px",
-      border: "1px solid var(--lip-border-strong, rgba(255,255,255,0.24))",
+      borderRadius: 17,
+      padding: "11px 14px",
+      border: "1px solid rgba(29, 78, 216, 0.2)",
       background:
-        "var(--lip-cta-bg, linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06)))",
-      color: "inherit",
+        "linear-gradient(180deg, #4d8df7 0%, var(--accent) 48%, var(--accent-pressed) 100%)",
+      color: "#ffffff",
       cursor: "pointer",
-      fontWeight: 950,
-      fontSize: 12,
+      fontWeight: 700,
+      fontSize: 13,
       textDecoration: "none",
       display: "inline-flex",
       alignItems: "center",
       gap: 8,
+      boxShadow:
+        "0 1px 0 rgba(255,255,255,0.24) inset, 0 6px 16px rgba(59,130,246,0.18), 0 2px 6px rgba(15,23,42,0.06)",
     },
     btn: {
-      borderRadius: 12,
-      padding: "10px 12px",
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
-      background: "var(--lip-surface-1, rgba(255,255,255,0.06))",
-      color: "inherit",
+      borderRadius: 16,
+      padding: "10px 13px",
+      border: "1px solid var(--border-strong)",
+      background: "linear-gradient(180deg, #ffffff 0%, #f7faff 100%)",
+      color: "var(--foreground)",
       cursor: "pointer",
-      fontWeight: 900,
-      fontSize: 12,
+      fontWeight: 700,
+      fontSize: 13,
       textDecoration: "none",
       display: "inline-flex",
       alignItems: "center",
       gap: 8,
+      boxShadow:
+        "0 1px 0 rgba(255,255,255,0.9) inset, 0 4px 12px rgba(15,23,42,0.04)",
     },
     btnGhost: {
-      borderRadius: 12,
-      padding: "10px 12px",
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
-      background: "transparent",
-      color: "inherit",
+      borderRadius: 16,
+      padding: "10px 13px",
+      border: "1px solid var(--border-strong)",
+      background: "linear-gradient(180deg, #ffffff 0%, #f7faff 100%)",
+      color: "var(--foreground)",
       cursor: "pointer",
-      fontWeight: 900,
-      fontSize: 12,
+      fontWeight: 700,
+      fontSize: 13,
+      boxShadow:
+        "0 1px 0 rgba(255,255,255,0.9) inset, 0 4px 12px rgba(15,23,42,0.04)",
     },
     cardMini: {
-      borderRadius: 14,
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
-      background: "var(--lip-surface-0, rgba(255,255,255,0.03))",
-      padding: 12,
+      borderRadius: 20,
+      border: "1px solid rgba(216, 226, 238, 0.9)",
+      background: "rgba(255,255,255,0.78)",
+      boxShadow: "var(--shadow-sm)",
+      padding: 14,
       display: "flex",
       flexDirection: "column",
       gap: 10,
+      backdropFilter: "blur(10px)",
     },
     countdownCard: {
-      borderRadius: 14,
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
+      borderRadius: 20,
+      border: "1px solid var(--border)",
       background:
-        "var(--lip-surface-1, linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03)))",
-      padding: 12,
+        "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,251,255,0.96))",
+      boxShadow: "var(--shadow-sm)",
+      padding: 14,
       display: "flex",
       flexDirection: "column",
       gap: 8,
     },
-    countdownBig: { fontSize: 22, fontWeight: 950, letterSpacing: 0.8 },
+    countdownBig: {
+      fontSize: 26,
+      fontWeight: 900,
+      letterSpacing: "0.02em",
+      color: "var(--foreground)",
+    },
     warn: {
-      borderRadius: 12,
-      border: "1px solid var(--lip-warn-border, rgba(255,220,120,0.30))",
-      background: "var(--lip-warn-bg, rgba(255,220,120,0.08))",
+      borderRadius: 14,
+      border: "1px solid rgba(245, 158, 11, 0.25)",
+      background: "rgba(255, 243, 218, 0.88)",
       padding: 10,
       fontSize: 12,
-      lineHeight: 1.5,
-      opacity: 0.95,
+      lineHeight: 1.6,
+      color: "#8a5a00",
     },
     modalOverlay: {
       position: "fixed",
       inset: 0,
-      background: "var(--lip-overlay, rgba(0,0,0,0.62))",
+      background: "rgba(15, 23, 42, 0.28)",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
@@ -1337,15 +1333,16 @@ export default function StudentDashboard() {
     modal: {
       width: "min(980px, 96vw)",
       maxHeight: "88vh",
-      borderRadius: 18,
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
-      background: "var(--lip-modal-bg, rgba(16,16,16,0.92))",
-      padding: 14,
+      borderRadius: 24,
+      border: "1px solid var(--border)",
+      background:
+        "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,251,255,0.98))",
+      padding: 16,
       display: "flex",
       flexDirection: "column",
       gap: 12,
       overflow: "hidden",
-      boxShadow: "var(--lip-shadow-strong, 0 18px 60px rgba(0,0,0,0.35))",
+      boxShadow: "var(--shadow-lg)",
     },
     gridImgs: {
       overflow: "auto",
@@ -1357,14 +1354,14 @@ export default function StudentDashboard() {
     imgThumb: {
       width: "100%",
       height: 130,
-      borderRadius: 14,
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
+      borderRadius: 16,
+      border: "1px solid var(--border)",
       objectFit: "cover",
-      background: "var(--lip-surface-0, rgba(255,255,255,0.02))",
+      background: "rgba(255,255,255,0.94)",
       cursor: "pointer",
+      boxShadow: "var(--shadow-sm)",
     },
 
-    // ✅ New: feedback section styles
     feedbackWrap: {
       display: "flex",
       flexDirection: "column",
@@ -1376,32 +1373,33 @@ export default function StudentDashboard() {
       gap: 10,
     },
     feedbackCard: {
-      borderRadius: 14,
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
-      background: "var(--lip-surface-0, rgba(255,255,255,0.03))",
+      borderRadius: 16,
+      border: "1px solid rgba(216, 226, 238, 0.9)",
+      background: "rgba(255,255,255,0.86)",
       padding: 12,
       display: "flex",
       flexDirection: "column",
       gap: 8,
       minHeight: 120,
+      boxShadow: "var(--shadow-sm)",
     },
     feedbackTitle: {
-      fontWeight: 950,
+      fontWeight: 900,
       fontSize: 12,
-      letterSpacing: 0.2,
-      opacity: 0.95,
+      letterSpacing: "0.01em",
+      color: "var(--foreground)",
     },
     feedbackList: {
       margin: 0,
       paddingLeft: 16,
       fontSize: 12,
-      lineHeight: 1.6,
-      opacity: 0.88,
+      lineHeight: 1.65,
+      color: "var(--muted-strong)",
       maxHeight: 180,
       overflow: "auto",
       paddingRight: 6,
     },
-    feedbackEmpty: { fontSize: 12, opacity: 0.7, lineHeight: 1.6 },
+    feedbackEmpty: { fontSize: 12, color: "var(--muted)", lineHeight: 1.6 },
     toggleRow: {
       display: "flex",
       justifyContent: "space-between",
@@ -1411,36 +1409,35 @@ export default function StudentDashboard() {
     rawBox: {
       margin: 0,
       fontSize: 11,
-      lineHeight: 1.5,
-      opacity: 0.85,
+      lineHeight: 1.55,
+      color: "var(--muted-strong)",
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
       maxHeight: 240,
       overflow: "auto",
       paddingRight: 6,
-      borderRadius: 12,
-      border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
-      background: "rgba(0,0,0,0.18)",
+      borderRadius: 14,
+      border: "1px solid var(--border)",
+      background: "rgba(255,255,255,0.94)",
       padding: 10,
     },
   };
 
   function lessonRowStyle(active: boolean): React.CSSProperties {
     return {
-      borderRadius: 14,
-      border: active
-        ? "1px solid var(--lip-border-strong, rgba(255,255,255,0.26))"
-        : "1px solid var(--lip-border, rgba(255,255,255,0.12))",
+      borderRadius: 18,
+      border: active ? "1px solid #b8cce4" : "1px solid rgba(216, 226, 238, 0.9)",
       background: active
-        ? "var(--lip-surface-2, rgba(255,255,255,0.08))"
-        : "var(--lip-surface-0, rgba(255,255,255,0.03))",
+        ? "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(240,247,255,0.96))"
+        : "rgba(255,255,255,0.78)",
       padding: 12,
       cursor: "pointer",
       display: "flex",
       flexDirection: "column",
       gap: 10,
       transition:
-        "transform 120ms ease, background 120ms ease, border 120ms ease",
+        "transform 120ms ease, background 120ms ease, border 120ms ease, box-shadow 120ms ease",
+      boxShadow: active ? "var(--shadow-md)" : "var(--shadow-sm)",
     };
   }
 
@@ -1450,18 +1447,14 @@ export default function StudentDashboard() {
       alignItems: "center",
       gap: 6,
       fontSize: 11,
-      fontWeight: 900,
+      fontWeight: 800,
       padding: "6px 10px",
       borderRadius: 999,
       border: done
-        ? "1px solid var(--lip-success-border, rgba(120,255,190,0.45))"
-        : "1px solid var(--lip-border, rgba(255,255,255,0.16))",
-      background: done
-        ? "var(--lip-success-bg, rgba(120,255,190,0.10))"
-        : "var(--lip-surface-0, rgba(255,255,255,0.04))",
-      color: done
-        ? "var(--lip-success-text, rgba(220,255,240,0.95))"
-        : "var(--lip-text-muted, rgba(255,255,255,0.78))",
+        ? "1px solid rgba(22, 163, 74, 0.22)"
+        : "1px solid var(--border)",
+      background: done ? "#dcfce7" : "#eaf0f7",
+      color: done ? "#15803d" : "#41556f",
       userSelect: "none",
       whiteSpace: "nowrap",
     };
@@ -1470,37 +1463,34 @@ export default function StudentDashboard() {
   function menuItem(active: boolean): React.CSSProperties {
     return {
       width: "100%",
-      borderRadius: 12,
+      borderRadius: 16,
       padding: "11px 12px",
-      border: active
-        ? "1px solid var(--lip-border-strong, rgba(255,255,255,0.22))"
-        : "1px solid var(--lip-border, rgba(255,255,255,0.12))",
+      border: active ? "1px solid #b8cce4" : "1px solid var(--border)",
       background: active
-        ? "var(--lip-surface-2, rgba(255,255,255,0.08))"
-        : "var(--lip-surface-0, rgba(255,255,255,0.03))",
-      color: "inherit",
+        ? "linear-gradient(180deg, #ffffff 0%, #eef6ff 100%)"
+        : "linear-gradient(180deg, #ffffff 0%, #f7faff 100%)",
+      color: "var(--foreground)",
       cursor: "pointer",
-      fontWeight: 950,
+      fontWeight: 800,
       fontSize: 12,
       textDecoration: "none",
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: 10,
+      boxShadow:
+        "0 1px 0 rgba(255,255,255,0.9) inset, 0 4px 12px rgba(15,23,42,0.04)",
     };
   }
 
   if (booting) return <div style={{ padding: 20, opacity: 0.8 }}>Loading…</div>;
   if (err)
     return (
-      <div style={{ padding: 20, color: "var(--lip-error, #ffb4b4)" }}>
-        Error: {err}
-      </div>
+      <div style={{ padding: 20, color: "var(--danger)" }}>Error: {err}</div>
     );
 
   return (
     <div style={styles.page}>
-      {/* Topbar */}
       <div style={styles.topbar}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <div style={styles.title}>Student Dashboard</div>
@@ -1536,9 +1526,7 @@ export default function StudentDashboard() {
         </div>
       </div>
 
-      {/* 4 columns */}
       <div style={styles.grid} className="grid4">
-        {/* Column 1: Lessons */}
         <div style={styles.col}>
           <div style={styles.colHeader}>
             <div style={styles.colTitle}>Lessons</div>
@@ -1547,16 +1535,11 @@ export default function StudentDashboard() {
             </div>
           </div>
 
-          {/* Header row */}
           <div style={styles.legendRow}>
-            <div style={{ opacity: 0.78 }}>
-              {lessonsLoading
-                ? "Đang tải lesson summary..."
-                : "Chọn lesson để mở menu"}
-            </div>
+            <div>{lessonsLoading ? "Đang tải lesson summary..." : "Chọn lesson để mở menu"}</div>
             <div style={styles.legendRight}>
-              <div style={{ fontWeight: 950, opacity: 0.92 }}>Prelearning</div>
-              <div style={{ fontWeight: 950, opacity: 0.92 }}>Luyện tập</div>
+              <div style={{ fontWeight: 800 }}>Prelearning</div>
+              <div style={{ fontWeight: 800 }}>Luyện tập</div>
             </div>
           </div>
 
@@ -1581,14 +1564,18 @@ export default function StudentDashboard() {
                     key={l.id}
                     style={lessonRowStyle(active)}
                     onClick={() => setExpandedLessonId(active ? null : l.id)}
-                    onMouseEnter={(e) =>
-                      (((e.currentTarget as HTMLDivElement).style.transform =
-                        "translateY(-1px)"))
-                    }
-                    onMouseLeave={(e) =>
-                      (((e.currentTarget as HTMLDivElement).style.transform =
-                        "translateY(0px)"))
-                    }
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget as HTMLDivElement;
+                      el.style.transform = "translateY(-1px)";
+                      el.style.boxShadow = "var(--shadow-md)";
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget as HTMLDivElement;
+                      el.style.transform = "translateY(0px)";
+                      el.style.boxShadow = active
+                        ? "var(--shadow-md)"
+                        : "var(--shadow-sm)";
+                    }}
                   >
                     <div
                       style={{
@@ -1600,10 +1587,11 @@ export default function StudentDashboard() {
                     >
                       <div
                         style={{
-                          fontWeight: 900,
+                          fontWeight: 800,
                           fontSize: 13,
                           overflow: "hidden",
                           textOverflow: "ellipsis",
+                          color: "var(--foreground)",
                         }}
                       >
                         Lesson {l.order}: {l.title}
@@ -1622,7 +1610,7 @@ export default function StudentDashboard() {
                           <span>{l.practiceDone ? "✅" : "⬜"}</span>
                           <span>Prac</span>
                           {l.practiceDone && pracScoreText ? (
-                            <span style={{ opacity: 0.9, fontWeight: 950 }}>
+                            <span style={{ opacity: 0.9, fontWeight: 900 }}>
                               • {pracScoreText}
                             </span>
                           ) : null}
@@ -1649,7 +1637,7 @@ export default function StudentDashboard() {
                             <span>📚</span>
                             <span>Tài liệu học tập</span>
                           </span>
-                          <span style={{ opacity: 0.6, fontWeight: 950 }}>›</span>
+                          <span style={{ opacity: 0.5, fontWeight: 900 }}>›</span>
                         </button>
 
                         <button
@@ -1666,7 +1654,7 @@ export default function StudentDashboard() {
                             <span>✅</span>
                             <span>Prelearning Activities</span>
                           </span>
-                          <span style={{ opacity: 0.6, fontWeight: 950 }}>›</span>
+                          <span style={{ opacity: 0.5, fontWeight: 900 }}>›</span>
                         </button>
 
                         <button
@@ -1683,14 +1671,14 @@ export default function StudentDashboard() {
                             <span>🎯</span>
                             <span>Luyện tập</span>
                           </span>
-                          <span style={{ opacity: 0.6, fontWeight: 950 }}>›</span>
+                          <span style={{ opacity: 0.5, fontWeight: 900 }}>›</span>
                         </button>
 
                         <div style={styles.divider} />
 
                         {lessonTab === "materials" ? (
                           <div style={styles.cardMini}>
-                            <div style={{ fontWeight: 950, fontSize: 13 }}>
+                            <div style={{ fontWeight: 900, fontSize: 13 }}>
                               Slide bài giảng
                             </div>
 
@@ -1704,7 +1692,7 @@ export default function StudentDashboard() {
                               <>
                                 <div style={styles.tiny}>
                                   Updated:{" "}
-                                  <span style={{ opacity: 0.9 }}>
+                                  <span style={{ color: "var(--foreground)" }}>
                                     {l.slideUpdatedAt
                                       ? safeDate(l.slideUpdatedAt)
                                       : "-"}
@@ -1729,7 +1717,7 @@ export default function StudentDashboard() {
                                   title={l.slidePath ?? ""}
                                 >
                                   slide_path:{" "}
-                                  <span style={{ opacity: 0.85 }}>
+                                  <span style={{ color: "var(--foreground)" }}>
                                     {l.slidePath}
                                   </span>
                                 </div>
@@ -1740,7 +1728,7 @@ export default function StudentDashboard() {
 
                         {lessonTab === "prelearning" ? (
                           <div style={styles.cardMini}>
-                            <div style={{ fontWeight: 950, fontSize: 13 }}>
+                            <div style={{ fontWeight: 900, fontSize: 13 }}>
                               Prelearning
                             </div>
 
@@ -1748,12 +1736,12 @@ export default function StudentDashboard() {
                               <>
                                 <div style={styles.muted}>
                                   Điểm gần nhất:{" "}
-                                  <b style={{ opacity: 0.95 }}>
+                                  <b style={{ color: "var(--foreground)" }}>
                                     {l.prelearningScore != null
                                       ? `${l.prelearningScore}/10`
                                       : "-"}
                                   </b>{" "}
-                                  <span style={{ opacity: 0.65 }}>
+                                  <span style={{ color: "var(--muted)" }}>
                                     •{" "}
                                     {l.prelearningCreatedAt
                                       ? safeDate(l.prelearningCreatedAt)
@@ -1802,21 +1790,21 @@ export default function StudentDashboard() {
 
                         {lessonTab === "practice" ? (
                           <div style={styles.cardMini}>
-                            <div style={{ fontWeight: 950, fontSize: 13 }}>
+                            <div style={{ fontWeight: 900, fontSize: 13 }}>
                               Luyện tập
                             </div>
 
                             {l.practiceDone ? (
                               <div style={styles.muted}>
                                 Điểm đã chốt (lần nộp đầu):{" "}
-                                <b style={{ opacity: 0.95 }}>
+                                <b style={{ color: "var(--foreground)" }}>
                                   {formatPracticeScore(
                                     l.practiceCorrect,
                                     l.practiceTotal,
                                     l.practicePct
                                   ) || "—"}
                                 </b>{" "}
-                                <span style={{ opacity: 0.65 }}>
+                                <span style={{ color: "var(--muted)" }}>
                                   •{" "}
                                   {l.practiceCreatedAt
                                     ? safeDate(l.practiceCreatedAt)
@@ -1857,16 +1845,14 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        {/* Column 2: My classes */}
         <div style={styles.col}>
           <div style={styles.colHeader}>
             <div style={styles.colTitle}>My classes</div>
             <div style={styles.pill}>{classes.length} classes</div>
           </div>
 
-          {/* ✅ Join class by code */}
           <div style={styles.cardMini}>
-            <div style={{ fontWeight: 950, fontSize: 13 }}>
+            <div style={{ fontWeight: 900, fontSize: 13 }}>
               Join class bằng code
             </div>
             <div style={styles.tiny}>
@@ -1899,8 +1885,8 @@ export default function StudentDashboard() {
                 style={{
                   ...styles.tiny,
                   color: joinMsg.startsWith("✅")
-                    ? "rgba(170,255,210,0.95)"
-                    : "var(--lip-error, #ffb4b4)",
+                    ? "var(--success)"
+                    : "var(--danger)",
                 }}
               >
                 {joinMsg}
@@ -1913,7 +1899,6 @@ export default function StudentDashboard() {
             </div>
           </div>
 
-          {/* Countdown T-2h */}
           <div style={styles.countdownCard}>
             <div
               style={{
@@ -1923,7 +1908,7 @@ export default function StudentDashboard() {
                 alignItems: "baseline",
               }}
             >
-              <div style={{ fontWeight: 950, fontSize: 13 }}>
+              <div style={{ fontWeight: 900, fontSize: 13 }}>
                 ⏳ Countdown (T-2h)
               </div>
               <div style={styles.tiny}>{activeClass?.scheduleText ?? "-"}</div>
@@ -1933,7 +1918,7 @@ export default function StudentDashboard() {
               <>
                 <div style={styles.tiny}>
                   Buổi học tiếp theo:{" "}
-                  <b style={{ opacity: 0.95 }}>
+                  <b style={{ color: "var(--foreground)" }}>
                     {countdownVM.nextStart.toLocaleString()}
                   </b>
                 </div>
@@ -1974,16 +1959,20 @@ export default function StudentDashboard() {
                 <div
                   key={c.id}
                   style={{
-                    borderRadius: 16,
+                    borderRadius: 20,
                     border:
                       c.id === activeClassId
-                        ? "1px solid var(--lip-border-strong, rgba(255,255,255,0.22))"
-                        : "1px solid var(--lip-border, rgba(255,255,255,0.12))",
-                    background: "var(--lip-surface-0, rgba(255,255,255,0.03))",
+                        ? "1px solid #b8cce4"
+                        : "1px solid rgba(216, 226, 238, 0.9)",
+                    background:
+                      c.id === activeClassId
+                        ? "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(240,247,255,0.96))"
+                        : "rgba(255,255,255,0.78)",
                     padding: 14,
                     display: "flex",
                     flexDirection: "column",
                     gap: 10,
+                    boxShadow: "var(--shadow-sm)",
                   }}
                 >
                   <div
@@ -1995,35 +1984,34 @@ export default function StudentDashboard() {
                   >
                     <div
                       style={{
-                        fontWeight: 950,
+                        fontWeight: 900,
                         fontSize: 14,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
+                        color: "var(--foreground)",
                       }}
                     >
                       {c.name}
                     </div>
                     <div style={styles.tiny}>
-                      Tutor: <b style={{ opacity: 0.9 }}>{c.tutorName}</b>
+                      Tutor: <b style={{ color: "var(--foreground)" }}>{c.tutorName}</b>
                     </div>
                   </div>
 
                   <div style={styles.tiny}>
                     Thời khóa biểu:{" "}
-                    <span style={{ opacity: 0.9 }}>{c.scheduleText}</span>
+                    <span style={{ color: "var(--foreground)" }}>{c.scheduleText}</span>
                   </div>
                   <div style={styles.tiny}>
                     Join code:{" "}
-                    <span style={{ opacity: 0.9 }}>{c.joinCode ?? "-"}</span>
+                    <span style={{ color: "var(--foreground)" }}>{c.joinCode ?? "-"}</span>
                   </div>
 
                   <div style={styles.btnRow}>
-                    {/* ✅ FIX: Join class = vào Live Classroom */}
                     <Link href={`/class/${c.id}`} style={styles.btnPrimary as any}>
                       Enter Live Class →
                     </Link>
 
-                    {/* (giữ lại menu buổi học/prelearning nếu cần) */}
                     <Link
                       href={`/student/class/${c.id}`}
                       style={styles.btn as any}
@@ -2041,7 +2029,6 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        {/* Column 3: My Vocabulary */}
         <div style={styles.col}>
           <div style={styles.colHeader}>
             <div style={styles.colTitle}>My Vocabulary</div>
@@ -2049,13 +2036,13 @@ export default function StudentDashboard() {
           </div>
 
           <div style={styles.cardMini}>
-            <div style={{ fontWeight: 950, fontSize: 13 }}>Kho từ vựng</div>
+            <div style={{ fontWeight: 900, fontSize: 13 }}>Kho từ vựng</div>
             <div style={styles.muted}>
-              Tổng số từ: <b style={{ opacity: 0.95 }}>{vocabTotal}</b>
+              Tổng số từ: <b style={{ color: "var(--foreground)" }}>{vocabTotal}</b>
             </div>
             <div style={styles.muted}>
               Đã ghi nhớ (ước tính):{" "}
-              <b style={{ opacity: 0.95 }}>{vocabMasteredPct}%</b>
+              <b style={{ color: "var(--foreground)" }}>{vocabMasteredPct}%</b>
             </div>
             <div style={styles.tiny}>
               MVP: trong trang MV sẽ có ôn luyện trắc nghiệm → hệ thống tổng kết
@@ -2075,7 +2062,6 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        {/* Column 4: My Profile */}
         <div style={styles.col}>
           <div style={styles.colHeader}>
             <div style={styles.colTitle}>My Profile</div>
@@ -2087,14 +2073,15 @@ export default function StudentDashboard() {
               style={{
                 width: 56,
                 height: 56,
-                borderRadius: 16,
-                border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
-                background: "var(--lip-surface-0, rgba(255,255,255,0.04))",
+                borderRadius: 18,
+                border: "1px solid var(--border)",
+                background: "rgba(255,255,255,0.92)",
                 overflow: "hidden",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontWeight: 950,
+                fontWeight: 900,
+                boxShadow: "var(--shadow-sm)",
               }}
               title="Avatar (MVP placeholder)"
             >
@@ -2111,7 +2098,9 @@ export default function StudentDashboard() {
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ fontWeight: 950, fontSize: 14 }}>{displayName}</div>
+              <div style={{ fontWeight: 900, fontSize: 14, color: "var(--foreground)" }}>
+                {displayName}
+              </div>
               <div style={styles.tiny}>
                 User ID: {userId ? `${userId.slice(0, 8)}…` : "-"}
               </div>
@@ -2119,7 +2108,7 @@ export default function StudentDashboard() {
           </div>
 
           <div style={styles.cardMini}>
-            <div style={{ fontWeight: 950, fontSize: 13 }}>
+            <div style={{ fontWeight: 900, fontSize: 13 }}>
               {profileSummary.title}
             </div>
             <div style={{ ...styles.muted, lineHeight: 1.6 }}>
@@ -2153,7 +2142,6 @@ export default function StudentDashboard() {
         </div>
       </div>
 
-      {/* Responsive */}
       <style jsx>{`
         @media (max-width: 1200px) {
           .grid4 {
@@ -2170,7 +2158,6 @@ export default function StudentDashboard() {
         }
       `}</style>
 
-      {/* Slide modal */}
       {slideOpen && slideLesson ? (
         <div
           style={styles.modalOverlay}
@@ -2193,16 +2180,16 @@ export default function StudentDashboard() {
             >
               <div
                 style={{
-                  fontWeight: 950,
+                  fontWeight: 900,
                   fontSize: 13,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
+                  color: "var(--foreground)",
                 }}
               >
                 Lesson {slideLesson.order}: {slideLesson.title} — Slide
               </div>
 
-              {/* ✅ Fullscreen + Open new tab + Close */}
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <button
                   style={styles.btnGhost}
@@ -2260,7 +2247,7 @@ export default function StudentDashboard() {
             <div style={styles.cardMini}>
               <div style={styles.tiny}>
                 Updated:{" "}
-                <span style={{ opacity: 0.9 }}>
+                <span style={{ color: "var(--foreground)" }}>
                   {slideLesson.slideUpdatedAt
                     ? safeDate(slideLesson.slideUpdatedAt)
                     : "-"}
@@ -2274,7 +2261,7 @@ export default function StudentDashboard() {
                 <div
                   style={{
                     ...styles.muted,
-                    color: "var(--lip-error, #ffb4b4)",
+                    color: "var(--danger)",
                   }}
                 >
                   Error: {slideErr}
@@ -2286,11 +2273,10 @@ export default function StudentDashboard() {
                   ref={slideFrameWrapRef}
                   style={{
                     height: "70vh",
-                    borderRadius: 14,
+                    borderRadius: 16,
                     overflow: "hidden",
-                    border:
-                      "1px solid var(--lip-border, rgba(255,255,255,0.12))",
-                    background: "rgba(0,0,0,0.25)",
+                    border: "1px solid var(--border)",
+                    background: "rgba(255,255,255,0.92)",
                   }}
                 >
                   <iframe
@@ -2316,9 +2302,8 @@ export default function StudentDashboard() {
                 </div>
               ) : null}
 
-              {/* Hint */}
               {!slideErr && slideUrl ? (
-                <div style={styles.tiny} title="Gợi ý fullscreen">
+                <div style={styles.tiny}>
                   Tip: nếu browser không cho fullscreen trong modal, dùng{" "}
                   <b>Open new tab</b> để xem toàn màn hình.
                 </div>
@@ -2328,7 +2313,6 @@ export default function StudentDashboard() {
         </div>
       ) : null}
 
-      {/* Prelearning detail modal */}
       {detailOpen && detailLesson ? (
         <div
           style={styles.modalOverlay}
@@ -2350,10 +2334,11 @@ export default function StudentDashboard() {
             >
               <div
                 style={{
-                  fontWeight: 950,
+                  fontWeight: 900,
                   fontSize: 13,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
+                  color: "var(--foreground)",
                 }}
               >
                 Lesson {detailLesson.order}: {detailLesson.title} — Prelearning
@@ -2375,12 +2360,12 @@ export default function StudentDashboard() {
             <div style={styles.cardMini}>
               <div style={styles.muted}>
                 Điểm gần nhất:{" "}
-                <b style={{ opacity: 0.95 }}>
+                <b style={{ color: "var(--foreground)" }}>
                   {detailLesson.prelearningScore != null
                     ? `${detailLesson.prelearningScore}/10`
                     : "-"}
                 </b>{" "}
-                <span style={{ opacity: 0.65 }}>
+                <span style={{ color: "var(--muted)" }}>
                   •{" "}
                   {detailLesson.prelearningCreatedAt
                     ? safeDate(detailLesson.prelearningCreatedAt)
@@ -2388,10 +2373,9 @@ export default function StudentDashboard() {
                 </span>
               </div>
 
-              {/* ✅ Show quiz + questions summary */}
               <div style={styles.tiny}>
                 Quiz:{" "}
-                <b style={{ opacity: 0.95 }}>
+                <b style={{ color: "var(--foreground)" }}>
                   {typeof detailLesson.latestAttempt?.pre_quiz_correct ===
                     "number" &&
                   typeof detailLesson.latestAttempt?.pre_quiz_total === "number"
@@ -2399,7 +2383,7 @@ export default function StudentDashboard() {
                     : "—"}
                 </b>{" "}
                 • Questions:{" "}
-                <b style={{ opacity: 0.95 }}>
+                <b style={{ color: "var(--foreground)" }}>
                   {Array.isArray(detailLesson.latestAttempt?.questions)
                     ? detailLesson.latestAttempt!.questions!.length
                     : 0}
@@ -2416,12 +2400,7 @@ export default function StudentDashboard() {
               ) : null}
 
               {detailErr ? (
-                <div
-                  style={{
-                    ...styles.muted,
-                    color: "var(--lip-error, #ffb4b4)",
-                  }}
-                >
+                <div style={{ ...styles.muted, color: "var(--danger)" }}>
                   Error: {detailErr}
                 </div>
               ) : null}
@@ -2435,7 +2414,7 @@ export default function StudentDashboard() {
                 gap: 10,
               }}
             >
-              <div style={{ fontWeight: 950, fontSize: 13 }}>
+              <div style={{ fontWeight: 900, fontSize: 13, color: "var(--foreground)" }}>
                 Notebook images
               </div>
               <div style={styles.tiny}>Click ảnh để phóng to</div>
@@ -2469,15 +2448,12 @@ export default function StudentDashboard() {
               ) : null}
             </div>
 
-            {/* ✅ Quiz details (optional preview) */}
             <div style={styles.cardMini}>
-              <div style={{ fontWeight: 950, fontSize: 13 }}>
-                Quiz + Questions
-              </div>
+              <div style={{ fontWeight: 900, fontSize: 13 }}>Quiz + Questions</div>
 
               <div style={styles.tiny}>
                 Pre-quiz:{" "}
-                <b style={{ opacity: 0.95 }}>
+                <b style={{ color: "var(--foreground)" }}>
                   {typeof detailLesson.latestAttempt?.pre_quiz_correct ===
                     "number" &&
                   typeof detailLesson.latestAttempt?.pre_quiz_total === "number"
@@ -2507,7 +2483,6 @@ export default function StudentDashboard() {
               </div>
             </div>
 
-            {/* ✅ AI feedback: human-friendly + optional raw JSON */}
             <AiFeedbackPreview raw={detailLesson.latestAttempt?.ai_feedback} styles={styles} />
 
             <div style={styles.btnRow}>
@@ -2522,7 +2497,6 @@ export default function StudentDashboard() {
         </div>
       ) : null}
 
-      {/* Lightbox */}
       {lightboxOpen ? (
         <div
           style={styles.modalOverlay}
@@ -2535,12 +2509,12 @@ export default function StudentDashboard() {
           <div
             style={{
               width: "min(1100px, 96vw)",
-              borderRadius: 18,
-              border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
-              background: "var(--lip-modal-bg, rgba(16,16,16,0.92))",
+              borderRadius: 24,
+              border: "1px solid var(--border)",
+              background:
+                "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,251,255,0.98))",
               padding: 12,
-              boxShadow:
-                "var(--lip-shadow-strong, 0 18px 60px rgba(0,0,0,0.35))",
+              boxShadow: "var(--shadow-lg)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -2554,11 +2528,12 @@ export default function StudentDashboard() {
             >
               <div
                 style={{
-                  fontWeight: 950,
+                  fontWeight: 900,
                   fontSize: 13,
                   display: "flex",
                   gap: 10,
                   alignItems: "center",
+                  color: "var(--foreground)",
                 }}
               >
                 <span>Notebook image</span>
@@ -2580,7 +2555,6 @@ export default function StudentDashboard() {
               </button>
             </div>
 
-            {/* ✅ Fit-in-view (no scroll) */}
             <div
               style={{
                 marginTop: 10,
@@ -2608,15 +2582,15 @@ export default function StudentDashboard() {
                   maxHeight: "85vh",
                   width: "auto",
                   height: "auto",
-                  borderRadius: 14,
-                  border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
+                  borderRadius: 16,
+                  border: "1px solid var(--border)",
                   objectFit: "contain",
-                  background: "var(--lip-surface-0, rgba(255,255,255,0.02))",
+                  background: "rgba(255,255,255,0.94)",
                 }}
               />
             </div>
 
-            <div style={{ marginTop: 10, ...styles.tiny, opacity: 0.7 }}>
+            <div style={{ marginTop: 10, ...styles.tiny }}>
               Tip: nếu muốn zoom sau này, mình sẽ thêm controls (+/−) và pan.
             </div>
           </div>
@@ -2626,7 +2600,6 @@ export default function StudentDashboard() {
   );
 }
 
-// -------------------- Inline component to keep file single --------------------
 function AiFeedbackPreview({
   raw,
   styles,
@@ -2645,7 +2618,9 @@ function AiFeedbackPreview({
   return (
     <div style={styles.cardMini as any}>
       <div style={{ ...styles.toggleRow }}>
-        <div style={{ fontWeight: 950, fontSize: 13 }}>AI feedback</div>
+        <div style={{ fontWeight: 900, fontSize: 13, color: "var(--foreground)" }}>
+          AI feedback
+        </div>
 
         <button
           type="button"
@@ -2713,7 +2688,7 @@ function AiFeedbackPreview({
               (Debug) Các field khác:{" "}
               {normalized.other.slice(0, 6).map((o, i) => (
                 <span key={o.key}>
-                  <b style={{ opacity: 0.9 }}>{o.key}</b>
+                  <b style={{ color: "var(--foreground)" }}>{o.key}</b>
                   {i < Math.min(normalized.other.length, 6) - 1 ? ", " : ""}
                 </span>
               ))}
