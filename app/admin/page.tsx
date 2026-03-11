@@ -83,6 +83,13 @@ const EMPTY_DRAFT: LessonDraft = {
 
 const IDLE_STATUS: SectionStatus = { kind: "idle", text: "" };
 
+const EMPTY_SECTION_STATUS: Record<SectionKey, SectionStatus> = {
+  truthSource: IDLE_STATUS,
+  prelearningJson: IDLE_STATUS,
+  theoryJson: IDLE_STATUS,
+  practiceJson: IDLE_STATUS,
+};
+
 export default function AdminPage() {
   const router = useRouter();
 
@@ -376,11 +383,7 @@ export default function AdminPage() {
     setSectionStatus((prev) => ({
       ...prev,
       [lessonId]: {
-        truthSource: prev[lessonId]?.truthSource ?? IDLE_STATUS,
-        prelearningJson: prev[lessonId]?.prelearningJson ?? IDLE_STATUS,
-        theoryJson: prev[lessonId]?.theoryJson ?? IDLE_STATUS,
-        practiceJson: prev[lessonId]?.practiceJson ?? IDLE_STATUS,
-        ...(prev[lessonId] ?? {}),
+        ...(prev[lessonId] ?? EMPTY_SECTION_STATUS),
         [section]: status,
       },
     }));
