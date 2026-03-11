@@ -21,7 +21,8 @@ type LessonRow = {
 };
 
 type LessonDraft = {
-  truthSource: string;
+  requiredNotes: string;
+  rubric: string;
   prelearningJson: string;
   theoryJson: string;
   practiceJson: string;
@@ -54,7 +55,7 @@ type SectionStatus = {
 type LessonTruthRow = {
   lesson_id: string;
   required_notes: string | null;
-  rubric?: unknown;
+  rubric: unknown;
 };
 
 type QuestionBankRow = {
@@ -76,7 +77,8 @@ const UI_FONT =
   'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"';
 
 const EMPTY_DRAFT: LessonDraft = {
-  truthSource: "",
+  requiredNotes: "",
+  rubric: "",
   prelearningJson: "",
   theoryJson: "",
   practiceJson: "",
@@ -90,6 +92,16 @@ const EMPTY_SECTION_STATUS: Record<SectionKey, SectionStatus> = {
   theoryJson: IDLE_STATUS,
   practiceJson: IDLE_STATUS,
 };
+
+function rubricToEditorText(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
 
 export default function AdminPage() {
   const router = useRouter();
@@ -237,12 +249,19 @@ export default function AdminPage() {
       if (!truthErr) {
         for (const row of (truthRows ?? []) as LessonTruthRow[]) {
           if (!nextDrafts[row.lesson_id]) continue;
-          nextDrafts[row.lesson_id].truthSource = row.required_notes ?? "";
+
+          const requiredNotes = row.required_notes ?? "";
+          const rubricText = rubricToEditorText(row.rubric);
+
+          nextDrafts[row.lesson_id].requiredNotes = requiredNotes;
+          nextDrafts[row.lesson_id].rubric = rubricText;
+
           nextStatus[row.lesson_id].truthSource = {
             kind: "loaded",
-            text: row.required_notes?.trim()
-              ? "Loaded from database"
-              : "No saved truth source yet",
+            text:
+              requiredNotes.trim() || rubricText.trim()
+                ? "Loaded required_notes + rubric from database"
+                : "No saved truth source yet",
           };
         }
       } else {
@@ -554,7 +573,8 @@ export default function AdminPage() {
       practice: 0,
     };
 
-    const truthState = draft.truthSource.trim() ? "Saved" : "Empty";
+    const truthState =
+      draft.requiredNotes.trim() || draft.rubric.trim() ? "Saved" : "Empty";
     const prelearningState =
       counts.prelearning > 0 ? `${counts.prelearning} saved` : "Empty";
     const theoryState =
@@ -643,12 +663,13 @@ export default function AdminPage() {
   }
 
   async function saveTruthSource(lesson: LessonRow) {
-    const requiredNotes = getDraft(lesson.id).truthSource.trim();
+    const requiredNotes = getDraft(lesson.id).requiredNotes.trim();
+    const rubricText = getDraft(lesson.id).rubric.trim();
 
     setBusyLessonId(lesson.id);
     setSectionState(lesson.id, "truthSource", {
       kind: "saving",
-      text: "Saving truth source...",
+      text: "Saving required_notes + rubric...",
     });
 
     try {
@@ -656,7 +677,7 @@ export default function AdminPage() {
         {
           lesson_id: lesson.id,
           required_notes: requiredNotes,
-          rubric: {},
+          rubric: rubricText,
           updated_at: new Date().toISOString(),
         },
         {
@@ -675,11 +696,14 @@ export default function AdminPage() {
 
       setSectionState(lesson.id, "truthSource", {
         kind: "success",
-        text: requiredNotes
-          ? "Saved successfully to lesson_truth.required_notes"
-          : "Saved empty truth source",
+        text:
+          requiredNotes || rubricText
+            ? "Saved successfully to lesson_truth.required_notes + rubric"
+            : "Saved empty truth source",
       });
-      setMsg(`✅ ${lesson.title} — Truth Source đã lưu thành công.`);
+      setMsg(
+        `✅ ${lesson.title} — Required Notes và Rubric đã lưu thành công.`
+      );
     } finally {
       setBusyLessonId(null);
     }
@@ -1085,7 +1109,7 @@ export default function AdminPage() {
           return {
             lesson_id: newLessonId,
             required_notes: row.required_notes ?? "",
-            rubric: row.rubric ?? {},
+            rubric: row.rubric ?? "",
             updated_at: new Date().toISOString(),
           };
         })
@@ -1857,35 +1881,77 @@ export default function AdminPage() {
 
                           {sectionCard(
                             "2) Truth Source",
-                            "Paste lesson knowledge text here. Saved into lesson_truth.required_notes.",
-                            <div>
-                              <textarea
-                                value={getDraft(l.id).truthSource}
-                                onChange={(e) =>
-                                  updateLessonDraft(
-                                    l.id,
-                                    "truthSource",
-                                    e.target.value
-                                  )
-                                }
-                                placeholder="Paste truth source / required notes here..."
-                                style={{
-                                  width: "100%",
-                                  minHeight: 180,
-                                  resize: "vertical",
-                                  borderRadius: 14,
-                                  border: "1px solid var(--border)",
-                                  background: "rgba(255,255,255,0.94)",
-                                  color: "var(--foreground)",
-                                  padding: 12,
-                                  fontFamily: UI_FONT,
-                                  lineHeight: 1.6,
-                                }}
-                              />
+                            "Required Notes dùng cho checklist học sinh. Rubric dùng cho flow chấm notebook về sau.",
+                            <div style={{ display: "grid", gap: 12 }}>
+                              <div>
+                                <div
+                                  style={{
+                                    fontWeight: 800,
+                                    color: "var(--foreground)",
+                                    marginBottom: 6,
+                                  }}
+                                >
+                                  Required Notes
+                                </div>
+                                <textarea
+                                  value={getDraft(l.id).requiredNotes}
+                                  onChange={(e) =>
+                                    updateLessonDraft(
+                                      l.id,
+                                      "requiredNotes",
+                                      e.target.value
+                                    )
+                                  }
+                                  placeholder="Paste required notes / nội dung bắt buộc phải chép ở đây..."
+                                  style={{
+                                    width: "100%",
+                                    minHeight: 150,
+                                    resize: "vertical",
+                                    borderRadius: 14,
+                                    border: "1px solid var(--border)",
+                                    background: "rgba(255,255,255,0.94)",
+                                    color: "var(--foreground)",
+                                    padding: 12,
+                                    fontFamily: UI_FONT,
+                                    lineHeight: 1.6,
+                                  }}
+                                />
+                              </div>
+
+                              <div>
+                                <div
+                                  style={{
+                                    fontWeight: 800,
+                                    color: "var(--foreground)",
+                                    marginBottom: 6,
+                                  }}
+                                >
+                                  Rubric
+                                </div>
+                                <textarea
+                                  value={getDraft(l.id).rubric}
+                                  onChange={(e) =>
+                                    updateLessonDraft(l.id, "rubric", e.target.value)
+                                  }
+                                  placeholder="Paste rubric / tiêu chí chấm notebook ở đây..."
+                                  style={{
+                                    width: "100%",
+                                    minHeight: 150,
+                                    resize: "vertical",
+                                    borderRadius: 14,
+                                    border: "1px solid var(--border)",
+                                    background: "rgba(255,255,255,0.94)",
+                                    color: "var(--foreground)",
+                                    padding: 12,
+                                    fontFamily: UI_FONT,
+                                    lineHeight: 1.6,
+                                  }}
+                                />
+                              </div>
 
                               <div
                                 style={{
-                                  marginTop: 10,
+                                  marginTop: 2,
                                   display: "flex",
                                   gap: 10,
                                   alignItems: "center",
@@ -2189,7 +2255,7 @@ export default function AdminPage() {
       >
         Lưu ý:
         <br />
-        - Truth Source đang lưu vào lesson_truth.required_notes.
+        - Truth Source đang lưu vào lesson_truth.required_notes và lesson_truth.rubric.
         <br />
         - Prelearning / Theory / Practice lưu kiểu replace set trong question_bank.
         <br />
