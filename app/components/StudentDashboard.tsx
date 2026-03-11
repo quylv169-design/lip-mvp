@@ -77,6 +77,17 @@ type PracticeAttemptRow = {
   created_at: string;
 };
 
+type PrelearningSummaryRow = {
+  id: string;
+  lesson_id: string;
+  class_id: string;
+  student_id: string;
+  created_at: string;
+  total_score: number | null;
+  pre_quiz_total?: number | null;
+  pre_quiz_correct?: number | null;
+};
+
 type ClassVM = {
   id: string;
   name: string;
@@ -106,6 +117,7 @@ type LessonVM = {
   practiceCreatedAt?: string;
 
   latestAttempt?: AttemptRow | null;
+  latestAttemptSummary?: PrelearningSummaryRow | null;
 };
 
 type LessonTab = "materials" | "prelearning" | "practice";
@@ -134,7 +146,9 @@ function formatDuration(ms: number) {
  * Parse schedule string like: "20:00 • T3, T5, T7"
  * dow: 0=Sun(CN),1=Mon(T2)...6=Sat(T7)
  */
-function parseSchedule(scheduleText: string): { hour: number; minute: number; dowSet: Set<number> } | null {
+function parseSchedule(
+  scheduleText: string
+): { hour: number; minute: number; dowSet: Set<number> } | null {
   const t = (scheduleText || "").trim();
   if (!t) return null;
 
@@ -157,7 +171,11 @@ function parseSchedule(scheduleText: string): { hour: number; minute: number; do
       dowSet.add(d - 1); // T2->1 (Mon), ... T7->6 (Sat)
       continue;
     }
-    if (p.includes("CN") || p.includes("CHU NHAT") || p.includes("CHỦ NHẬT")) {
+    if (
+      p.includes("CN") ||
+      p.includes("CHU NHAT") ||
+      p.includes("CHỦ NHẬT")
+    ) {
       dowSet.add(0); // Sunday
       continue;
     }
@@ -203,8 +221,13 @@ function stripLeadingLessonPrefix(title: string) {
   return t.replace(/^(?:lesson\s*\d+\s*:\s*)+/i, "").trim();
 }
 
-function formatPracticeScore(correct: number | null, total: number | null, pct: number | null) {
-  if (typeof correct !== "number" || typeof total !== "number" || total <= 0) return "";
+function formatPracticeScore(
+  correct: number | null,
+  total: number | null,
+  pct: number | null
+) {
+  if (typeof correct !== "number" || typeof total !== "number" || total <= 0)
+    return "";
   const pctText = typeof pct === "number" ? ` ~ ${pct}%` : "";
   return `${correct}/${total}${pctText}`;
 }
@@ -216,7 +239,8 @@ function normalizeJoinCode(input: string) {
 function mapJoinRpcErrorMessage(errMsg: string) {
   const m = String(errMsg || "");
   // Supabase thường bọc message kiểu: "JOIN_CODE_NOT_FOUND" hoặc "...: JOIN_CODE_NOT_FOUND"
-  if (m.includes("JOIN_CODE_NOT_FOUND")) return "Join code không đúng hoặc lớp không tồn tại.";
+  if (m.includes("JOIN_CODE_NOT_FOUND"))
+    return "Join code không đúng hoặc lớp không tồn tại.";
   if (m.includes("CLASS_FULL")) return "Lớp đã đủ học sinh (tối đa 2).";
   return "";
 }
@@ -235,13 +259,21 @@ function isNonEmptyString(x: any): x is string {
 
 function toStringList(maybeList: any): string[] {
   if (!maybeList) return [];
-  if (Array.isArray(maybeList)) return maybeList.map((x) => String(x ?? "").trim()).filter((s) => s.length > 0);
+  if (Array.isArray(maybeList))
+    return maybeList
+      .map((x) => String(x ?? "").trim())
+      .filter((s) => s.length > 0);
   if (isNonEmptyString(maybeList)) return [maybeList.trim()];
   return [];
 }
 
 function normalizeAiFeedback(raw: any): NormalizedAiFeedback {
-  const out: NormalizedAiFeedback = { notebook: [], questions: [], rewrite: [], other: [] };
+  const out: NormalizedAiFeedback = {
+    notebook: [],
+    questions: [],
+    rewrite: [],
+    other: [],
+  };
 
   if (!raw || typeof raw !== "object") return out;
 
@@ -268,7 +300,13 @@ function normalizeAiFeedback(raw: any): NormalizedAiFeedback {
     "mistakes",
   ];
 
-  const rewriteKeys = ["rewrite_suggestions", "rewrite", "suggestions", "suggested_rewrites", "rewrite_tips"];
+  const rewriteKeys = [
+    "rewrite_suggestions",
+    "rewrite",
+    "suggestions",
+    "suggested_rewrites",
+    "rewrite_tips",
+  ];
 
   for (const k of notebookKeys) {
     if (raw[k] != null) out.notebook.push(...toStringList(raw[k]));
@@ -286,9 +324,12 @@ function normalizeAiFeedback(raw: any): NormalizedAiFeedback {
     const sec = raw[sk];
     if (!sec || typeof sec !== "object") continue;
     // try nested keys again
-    for (const k of notebookKeys) if (sec[k] != null) out.notebook.push(...toStringList(sec[k]));
-    for (const k of questionKeys) if (sec[k] != null) out.questions.push(...toStringList(sec[k]));
-    for (const k of rewriteKeys) if (sec[k] != null) out.rewrite.push(...toStringList(sec[k]));
+    for (const k of notebookKeys)
+      if (sec[k] != null) out.notebook.push(...toStringList(sec[k]));
+    for (const k of questionKeys)
+      if (sec[k] != null) out.questions.push(...toStringList(sec[k]));
+    for (const k of rewriteKeys)
+      if (sec[k] != null) out.rewrite.push(...toStringList(sec[k]));
   }
 
   // Dedup while keeping order
@@ -337,6 +378,7 @@ export default function StudentDashboard() {
 
   const [booting, setBooting] = useState(true);
   const [err, setErr] = useState("");
+  const [lessonsLoading, setLessonsLoading] = useState(false);
 
   const [userId, setUserId] = useState("");
   const [userMetaName, setUserMetaName] = useState<string>("");
@@ -353,13 +395,18 @@ export default function StudentDashboard() {
   // Prelearning details modal
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLesson, setDetailLesson] = useState<LessonVM | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailErr, setDetailErr] = useState("");
 
   // Lightbox
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState("");
 
   // ✅ Lightbox "fit in view" (no scroll by default) + optional raw size
-  const [lightboxNatural, setLightboxNatural] = useState<{ w: number; h: number } | null>(null);
+  const [lightboxNatural, setLightboxNatural] = useState<{
+    w: number;
+    h: number;
+  } | null>(null);
 
   // Slide modal
   const [slideOpen, setSlideOpen] = useState(false);
@@ -494,10 +541,13 @@ export default function StudentDashboard() {
         return;
       }
 
-      const res = await fetch(`/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const res = await fetch(
+        `/api/lesson-slide-signed-url?lessonId=${encodeURIComponent(lessonId)}`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
 
       const json = await res.json();
       if (!res.ok) {
@@ -518,10 +568,15 @@ export default function StudentDashboard() {
     }
   }
 
-  async function fetchSignedPrelearningAttempts(params: { classId: string; studentId: string; lessonIds: string[] }) {
+  async function fetchSignedPrelearningAttempts(params: {
+    classId: string;
+    studentId: string;
+    lessonIds: string[];
+  }) {
     const { data: auth } = await supabase.auth.getSession();
     const accessToken = auth.session?.access_token;
-    if (!accessToken) return { attempts: [] as AttemptRow[], error: "Missing session token" };
+    if (!accessToken)
+      return { attempts: [] as AttemptRow[], error: "Missing session token" };
 
     const qs = new URLSearchParams();
     qs.set("classId", params.classId);
@@ -535,13 +590,40 @@ export default function StudentDashboard() {
     });
 
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) return { attempts: [] as AttemptRow[], error: String(json?.error || "Failed to load attempts") };
+    if (!res.ok)
+      return {
+        attempts: [] as AttemptRow[],
+        error: String(json?.error || "Failed to load attempts"),
+      };
 
-    const attempts = Array.isArray(json?.attempts) ? (json.attempts as AttemptRow[]) : [];
+    const attempts = Array.isArray(json?.attempts)
+      ? (json.attempts as AttemptRow[])
+      : [];
     return { attempts, error: "" };
   }
 
-  async function loadStudentDashboardState(opts?: { preferActiveClassId?: string }) {
+  async function fetchSignedPrelearningAttemptForLesson(params: {
+    classId: string;
+    studentId: string;
+    lessonId: string;
+  }) {
+    const result = await fetchSignedPrelearningAttempts({
+      classId: params.classId,
+      studentId: params.studentId,
+      lessonIds: [params.lessonId],
+    });
+
+    if (result.error) return { attempt: null as AttemptRow | null, error: result.error };
+
+    const first =
+      result.attempts.find((x) => String(x.lesson_id) === params.lessonId) ?? null;
+
+    return { attempt: first, error: "" };
+  }
+
+  async function loadStudentDashboardState(opts?: {
+    preferActiveClassId?: string;
+  }) {
     setBooting(true);
     setErr("");
 
@@ -557,7 +639,9 @@ export default function StudentDashboard() {
     setUserId(uid);
 
     const meta: any = session.user.user_metadata ?? {};
-    const metaName = String(meta.full_name || meta.name || meta.display_name || "").trim();
+    const metaName = String(
+      meta.full_name || meta.name || meta.display_name || ""
+    ).trim();
     setUserMetaName(metaName);
 
     const emailName = guessNameFromEmail(session.user.email ?? null);
@@ -583,7 +667,10 @@ export default function StudentDashboard() {
       setMe(null);
     }
 
-    const { data: memberships, error: memErr } = await supabase.from("class_members").select("class_id").eq("student_id", uid);
+    const { data: memberships, error: memErr } = await supabase
+      .from("class_members")
+      .select("class_id")
+      .eq("student_id", uid);
 
     if (memErr) {
       setErr(memErr.message);
@@ -623,8 +710,13 @@ export default function StudentDashboard() {
       return;
     }
 
-    const tutorIds = Array.from(new Set((classRows ?? []).map((c: any) => c.tutor_id)));
-    const { data: tutorRows, error: tutorErr } = await supabase.from("profiles").select("id,full_name").in("id", tutorIds);
+    const tutorIds = Array.from(
+      new Set((classRows ?? []).map((c: any) => c.tutor_id))
+    );
+    const { data: tutorRows, error: tutorErr } = await supabase
+      .from("profiles")
+      .select("id,full_name")
+      .in("id", tutorIds);
 
     if (tutorErr) {
       setErr(tutorErr.message);
@@ -638,10 +730,14 @@ export default function StudentDashboard() {
     }
 
     const tutorMap = new Map<string, string>();
-    (tutorRows ?? []).forEach((t: TutorRow) => tutorMap.set(t.id, t.full_name ?? "Tutor"));
+    (tutorRows ?? []).forEach((t: TutorRow) =>
+      tutorMap.set(t.id, t.full_name ?? "Tutor")
+    );
 
     const vms: ClassVM[] = (classRows ?? [])
-      .sort((a: any, b: any) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
+      .sort((a: any, b: any) =>
+        String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))
+      )
       .map((c: ClassRow) => ({
         id: c.id,
         name: c.name,
@@ -653,7 +749,8 @@ export default function StudentDashboard() {
     setClasses(vms);
 
     const prefer = String(opts?.preferActiveClassId ?? "").trim();
-    const nextActive = prefer && vms.some((x) => x.id === prefer) ? prefer : vms[0]?.id || "";
+    const nextActive =
+      prefer && vms.some((x) => x.id === prefer) ? prefer : vms[0]?.id || "";
     setActiveClassId(nextActive);
 
     setBooting(false);
@@ -667,23 +764,30 @@ export default function StudentDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  // ----- LOAD LESSONS + LATEST PRELEARNING (SIGNED) + LATEST PRACTICE -----
+  // ----- LOAD LESSONS + LIGHT PRELEARNING SUMMARY + LATEST PRACTICE -----
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       if (!activeClassId || !userId) return;
 
       setErr("");
+      setLessonsLoading(true);
 
       const { data: lessonRows, error: lessonErr } = await supabase
         .from("lessons")
-        .select("id,class_id,title,order_index,slide_path,slide_updated_at,created_at")
+        .select(
+          "id,class_id,title,order_index,slide_path,slide_updated_at,created_at"
+        )
         .eq("class_id", activeClassId)
         .order("order_index", { ascending: true });
 
       if (lessonErr) {
+        if (cancelled) return;
         setErr(lessonErr.message);
         setLessons([]);
         setExpandedLessonId(null);
+        setLessonsLoading(false);
         return;
       }
 
@@ -694,25 +798,64 @@ export default function StudentDashboard() {
         slide_updated_at: (l as any).slide_updated_at ?? null,
       }));
 
+      if (cancelled) return;
+
       const lessonIds = lessonList.map((l) => l.id);
 
-      // ✅ Load signed prelearning attempts (once)
-      const { attempts: signedAttempts, error: signedErr } = await fetchSignedPrelearningAttempts({
-        classId: activeClassId,
-        studentId: userId,
-        lessonIds,
+      // render skeleton-lessons ASAP with empty status first
+      const quickLessonVMs: LessonVM[] = lessonList.map((l) => {
+        const cleanedTitle = stripLeadingLessonPrefix(l.title);
+        return {
+          id: l.id,
+          rawTitle: l.title,
+          title: cleanedTitle || l.title,
+          order: l.order_index,
+
+          slidePath: (l.slide_path as any) ?? null,
+          slideUpdatedAt: (l.slide_updated_at as any) ?? null,
+
+          prelearningDone: false,
+          practiceDone: false,
+
+          prelearningScore: null,
+          prelearningCreatedAt: undefined,
+
+          practiceCorrect: null,
+          practiceTotal: null,
+          practicePct: null,
+          practiceCreatedAt: undefined,
+
+          latestAttempt: null,
+          latestAttemptSummary: null,
+        };
       });
 
-      if (signedErr) {
-        // Don't hard fail UI (still show lessons)
-        console.warn("[StudentDashboard] signed attempts error:", signedErr);
+      setLessons(quickLessonVMs);
+
+      if (lessonIds.length === 0) {
+        setExpandedLessonId(null);
+        setLessonsLoading(false);
+        return;
       }
 
-      const latestPreByLesson = new Map<string, AttemptRow>();
-      signedAttempts.forEach((a) => {
-        const lid = String(a.lesson_id);
-        if (!latestPreByLesson.has(lid)) latestPreByLesson.set(lid, a);
-      });
+      // ✅ Prelearning attempts summary only (no signed notebook URLs here)
+      const { data: preRows, error: preErr } = await supabase
+        .from("prelearning_attempts")
+        .select(
+          "id,lesson_id,class_id,student_id,created_at,total_score,pre_quiz_total,pre_quiz_correct"
+        )
+        .eq("student_id", userId)
+        .eq("class_id", activeClassId)
+        .in("lesson_id", lessonIds)
+        .order("created_at", { ascending: false })
+        .limit(500);
+
+      if (preErr) {
+        console.warn(
+          "[StudentDashboard] prelearning_attempts summary select error:",
+          preErr
+        );
+      }
 
       // ✅ Practice attempts (latest per lesson)
       // NOTE: practice_attempts has NO class_id column, so filter by student + lessonIds
@@ -720,19 +863,34 @@ export default function StudentDashboard() {
       if (lessonIds.length > 0) {
         const { data: pracRows, error: pracErr } = await supabase
           .from("practice_attempts")
-          .select("id,lesson_id,student_id,correct_count,total_count,pct,created_at")
+          .select(
+            "id,lesson_id,student_id,correct_count,total_count,pct,created_at"
+          )
           .eq("student_id", userId)
           .in("lesson_id", lessonIds)
           .order("created_at", { ascending: false })
           .limit(500);
 
         if (pracErr) {
-          console.warn("[StudentDashboard] practice_attempts select error:", pracErr);
+          console.warn(
+            "[StudentDashboard] practice_attempts select error:",
+            pracErr
+          );
           // không setErr cứng để tránh phá UI
         } else {
           practiceRows = (pracRows as any) ?? [];
         }
       }
+
+      if (cancelled) return;
+
+      const latestPreByLesson = new Map<string, PrelearningSummaryRow>();
+      (((preRows as PrelearningSummaryRow[]) ?? []) as PrelearningSummaryRow[]).forEach(
+        (a) => {
+          const lid = String(a.lesson_id);
+          if (!latestPreByLesson.has(lid)) latestPreByLesson.set(lid, a);
+        }
+      );
 
       const latestPracticeByLesson = new Map<string, PracticeAttemptRow>();
       practiceRows.forEach((r) => {
@@ -766,16 +924,27 @@ export default function StudentDashboard() {
           practicePct: latestPrac?.pct ?? null,
           practiceCreatedAt: latestPrac?.created_at,
 
-          latestAttempt: latestPre,
+          latestAttempt: null,
+          latestAttemptSummary: latestPre,
         };
       });
 
       setLessons(lessonVMs);
-      setExpandedLessonId((prev) => (prev && lessonVMs.some((x) => x.id === prev) ? prev : null));
+      setExpandedLessonId((prev) =>
+        prev && lessonVMs.some((x) => x.id === prev) ? prev : null
+      );
+      setLessonsLoading(false);
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeClassId, userId]);
 
-  const activeClass = useMemo(() => classes.find((c) => c.id === activeClassId) ?? null, [classes, activeClassId]);
+  const activeClass = useMemo(
+    () => classes.find((c) => c.id === activeClassId) ?? null,
+    [classes, activeClassId]
+  );
 
   const countdownVM = useMemo(() => {
     if (!activeClass) return null;
@@ -795,9 +964,6 @@ export default function StudentDashboard() {
   }, [activeClass, nowTick]);
 
   // ✅ FIX: ƯU TIÊN full_name trong profiles (v_my_profile), nếu chưa có thì dùng user_metadata, cuối cùng mới "Student"
-  // (KHÔNG hiển thị email nữa)
-  // NOTE: Nếu bạn thực sự muốn KHÔNG dùng local-part email làm fallback để tránh lộ email dạng "info.company",
-  // bạn có thể bỏ fallback "userEmailName" ở đây. Nhưng theo handover: fallback cuối cùng là "Student".
   const displayName = useMemo(() => {
     const a = (me?.full_name ?? "").trim();
     if (a) return a;
@@ -805,33 +971,46 @@ export default function StudentDashboard() {
     const b = (userMetaName ?? "").trim();
     if (b) return b;
 
-    // fallback cuối cùng: ưu tiên "Student" (tránh render dạng email local-part)
     return "Student";
   }, [me?.full_name, userMetaName]);
 
   const profileSummary = useMemo(() => {
     const total = lessons.length;
     const done = lessons.filter((l) => l.prelearningDone).length;
-    const scores = lessons.map((l) => l.prelearningScore).filter((x) => typeof x === "number") as number[];
-    const avg = scores.length ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10 : null;
+    const scores = lessons
+      .map((l) => l.prelearningScore)
+      .filter((x) => typeof x === "number") as number[];
+    const avg = scores.length
+      ? Math.round(
+          (scores.reduce((a, b) => a + b, 0) / scores.length) * 10
+        ) / 10
+      : null;
 
     if (total === 0) {
       return {
         title: "Bạn đang khởi động rất tốt 💪",
-        lines: ["Hiện lớp chưa có lesson để học.", "Khi tutor tạo lesson, bạn sẽ thấy danh sách Lesson 1..N ở cột Lessons."],
+        lines: [
+          "Hiện lớp chưa có lesson để học.",
+          "Khi tutor tạo lesson, bạn sẽ thấy danh sách Lesson 1..N ở cột Lessons.",
+        ],
       };
     }
     if (done === 0) {
       return {
         title: "Bắt đầu đúng hướng rồi đó ✨",
-        lines: ["Tiếp theo: chọn Lesson 1 → Prelearning Activities.", "Mẹo: ghi vở sạch/đủ ý + làm quiz kỹ sẽ tăng điểm rất nhanh."],
+        lines: [
+          "Tiếp theo: chọn Lesson 1 → Prelearning Activities.",
+          "Mẹo: ghi vở sạch/đủ ý + làm quiz kỹ sẽ tăng điểm rất nhanh.",
+        ],
       };
     }
     return {
       title: "Tiến bộ đang lên rồi 🚀",
       lines: [
         `Bạn đã hoàn thành prelearning: ${done}/${total} lesson.`,
-        avg != null ? `Điểm prelearning trung bình: ~ ${avg}/10.` : "Chưa đủ dữ liệu điểm trung bình.",
+        avg != null
+          ? `Điểm prelearning trung bình: ~ ${avg}/10.`
+          : "Chưa đủ dữ liệu điểm trung bình.",
         "Điểm mạnh: bạn đang duy trì nhịp học.",
         "Gợi ý: làm đều (đừng dồn), và ghi vở rõ ràng để feedback chuẩn hơn.",
       ],
@@ -862,7 +1041,9 @@ export default function StudentDashboard() {
     try {
       // Important: RPC function name must exist in Supabase:
       // public.join_class_by_code(p_join_code text) returns uuid
-      const { data, error } = await supabase.rpc("join_class_by_code", { p_join_code: code });
+      const { data, error } = await supabase.rpc("join_class_by_code", {
+        p_join_code: code,
+      });
 
       if (error) {
         const friendly = mapJoinRpcErrorMessage(error.message);
@@ -891,6 +1072,75 @@ export default function StudentDashboard() {
     }
   }
 
+  async function openPrelearningDetail(lesson: LessonVM) {
+    if (!activeClassId || !userId) return;
+
+    setDetailErr("");
+    setDetailLoading(true);
+
+    const summary = lesson.latestAttemptSummary;
+
+    // mở modal ngay với summary trước để UX không bị đứng
+    setDetailLesson({
+      ...lesson,
+      latestAttempt:
+        summary != null
+          ? ({
+              id: summary.id,
+              lesson_id: summary.lesson_id,
+              class_id: summary.class_id,
+              student_id: summary.student_id,
+              created_at: summary.created_at,
+              total_score: summary.total_score,
+              pre_quiz_total: summary.pre_quiz_total ?? null,
+              pre_quiz_correct: summary.pre_quiz_correct ?? null,
+            } as AttemptRow)
+          : null,
+    });
+    setDetailOpen(true);
+
+    try {
+      const { attempt, error } = await fetchSignedPrelearningAttemptForLesson({
+        classId: activeClassId,
+        studentId: userId,
+        lessonId: lesson.id,
+      });
+
+      if (error) {
+        setDetailErr(error);
+        return;
+      }
+
+      if (!attempt) {
+        setDetailErr("Không tìm thấy attempt chi tiết cho lesson này.");
+        return;
+      }
+
+      setDetailLesson((prev) => {
+        if (!prev || prev.id !== lesson.id) return prev;
+        return {
+          ...prev,
+          latestAttempt: attempt,
+        };
+      });
+
+      setLessons((prev) =>
+        prev.map((x) =>
+          x.id === lesson.id
+            ? {
+                ...x,
+                latestAttempt: attempt,
+              }
+            : x
+        )
+      );
+    } catch (e: any) {
+      setDetailErr(e?.message || "Lỗi không xác định khi tải chi tiết.");
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
   // ---------- STYLES ----------
   const styles: Record<string, React.CSSProperties> = {
     page: {
@@ -902,7 +1152,12 @@ export default function StudentDashboard() {
         'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"',
       color: "var(--lip-text, rgba(255,255,255,0.92))",
     },
-    topbar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 },
+    topbar: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    },
     title: { fontSize: 18, fontWeight: 950, letterSpacing: 0.2 },
     subtitle: { fontSize: 12, opacity: 0.72 },
     row: { display: "flex", gap: 10, alignItems: "center" },
@@ -930,7 +1185,11 @@ export default function StudentDashboard() {
       outline: "none",
       width: "100%",
     },
-    grid: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 },
+    grid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+      gap: 12,
+    },
     col: {
       borderRadius: 18,
       border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
@@ -962,14 +1221,30 @@ export default function StudentDashboard() {
       whiteSpace: "nowrap",
     },
 
-    legendRow: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11, opacity: 0.85 },
+    legendRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      gap: 10,
+      fontSize: 11,
+      opacity: 0.85,
+    },
     legendRight: { display: "flex", gap: 12, alignItems: "center" },
     legendCol: { fontWeight: 950, opacity: 0.92 },
 
-    list: { display: "flex", flexDirection: "column", gap: 10, overflow: "auto", paddingRight: 6 },
+    list: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
+      overflow: "auto",
+      paddingRight: 6,
+    },
     muted: { fontSize: 12, opacity: 0.78, lineHeight: 1.6 },
     tiny: { fontSize: 11, opacity: 0.68, lineHeight: 1.5 },
-    divider: { height: 1, background: "var(--lip-divider, rgba(255,255,255,0.08))", width: "100%" },
+    divider: {
+      height: 1,
+      background: "var(--lip-divider, rgba(255,255,255,0.08))",
+      width: "100%",
+    },
     chevron: { opacity: 0.6, fontWeight: 950 },
     expandPanel: {
       borderRadius: 14,
@@ -985,7 +1260,8 @@ export default function StudentDashboard() {
       borderRadius: 12,
       padding: "10px 12px",
       border: "1px solid var(--lip-border-strong, rgba(255,255,255,0.24))",
-      background: "var(--lip-cta-bg, linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06)))",
+      background:
+        "var(--lip-cta-bg, linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06)))",
       color: "inherit",
       cursor: "pointer",
       fontWeight: 950,
@@ -1031,7 +1307,8 @@ export default function StudentDashboard() {
     countdownCard: {
       borderRadius: 14,
       border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
-      background: "var(--lip-surface-1, linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03)))",
+      background:
+        "var(--lip-surface-1, linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03)))",
       padding: 12,
       display: "flex",
       flexDirection: "column",
@@ -1108,7 +1385,12 @@ export default function StudentDashboard() {
       gap: 8,
       minHeight: 120,
     },
-    feedbackTitle: { fontWeight: 950, fontSize: 12, letterSpacing: 0.2, opacity: 0.95 },
+    feedbackTitle: {
+      fontWeight: 950,
+      fontSize: 12,
+      letterSpacing: 0.2,
+      opacity: 0.95,
+    },
     feedbackList: {
       margin: 0,
       paddingLeft: 16,
@@ -1120,7 +1402,12 @@ export default function StudentDashboard() {
       paddingRight: 6,
     },
     feedbackEmpty: { fontSize: 12, opacity: 0.7, lineHeight: 1.6 },
-    toggleRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 },
+    toggleRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 10,
+    },
     rawBox: {
       margin: 0,
       fontSize: 11,
@@ -1144,13 +1431,16 @@ export default function StudentDashboard() {
       border: active
         ? "1px solid var(--lip-border-strong, rgba(255,255,255,0.26))"
         : "1px solid var(--lip-border, rgba(255,255,255,0.12))",
-      background: active ? "var(--lip-surface-2, rgba(255,255,255,0.08))" : "var(--lip-surface-0, rgba(255,255,255,0.03))",
+      background: active
+        ? "var(--lip-surface-2, rgba(255,255,255,0.08))"
+        : "var(--lip-surface-0, rgba(255,255,255,0.03))",
       padding: 12,
       cursor: "pointer",
       display: "flex",
       flexDirection: "column",
       gap: 10,
-      transition: "transform 120ms ease, background 120ms ease, border 120ms ease",
+      transition:
+        "transform 120ms ease, background 120ms ease, border 120ms ease",
     };
   }
 
@@ -1166,8 +1456,12 @@ export default function StudentDashboard() {
       border: done
         ? "1px solid var(--lip-success-border, rgba(120,255,190,0.45))"
         : "1px solid var(--lip-border, rgba(255,255,255,0.16))",
-      background: done ? "var(--lip-success-bg, rgba(120,255,190,0.10))" : "var(--lip-surface-0, rgba(255,255,255,0.04))",
-      color: done ? "var(--lip-success-text, rgba(220,255,240,0.95))" : "var(--lip-text-muted, rgba(255,255,255,0.78))",
+      background: done
+        ? "var(--lip-success-bg, rgba(120,255,190,0.10))"
+        : "var(--lip-surface-0, rgba(255,255,255,0.04))",
+      color: done
+        ? "var(--lip-success-text, rgba(220,255,240,0.95))"
+        : "var(--lip-text-muted, rgba(255,255,255,0.78))",
       userSelect: "none",
       whiteSpace: "nowrap",
     };
@@ -1181,7 +1475,9 @@ export default function StudentDashboard() {
       border: active
         ? "1px solid var(--lip-border-strong, rgba(255,255,255,0.22))"
         : "1px solid var(--lip-border, rgba(255,255,255,0.12))",
-      background: active ? "var(--lip-surface-2, rgba(255,255,255,0.08))" : "var(--lip-surface-0, rgba(255,255,255,0.03))",
+      background: active
+        ? "var(--lip-surface-2, rgba(255,255,255,0.08))"
+        : "var(--lip-surface-0, rgba(255,255,255,0.03))",
       color: "inherit",
       cursor: "pointer",
       fontWeight: 950,
@@ -1195,7 +1491,12 @@ export default function StudentDashboard() {
   }
 
   if (booting) return <div style={{ padding: 20, opacity: 0.8 }}>Loading…</div>;
-  if (err) return <div style={{ padding: 20, color: "var(--lip-error, #ffb4b4)" }}>Error: {err}</div>;
+  if (err)
+    return (
+      <div style={{ padding: 20, color: "var(--lip-error, #ffb4b4)" }}>
+        Error: {err}
+      </div>
+    );
 
   return (
     <div style={styles.page}>
@@ -1203,7 +1504,10 @@ export default function StudentDashboard() {
       <div style={styles.topbar}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <div style={styles.title}>Student Dashboard</div>
-          <div style={styles.subtitle}>{displayName ? `Hi, ${displayName}` : "Hi"} • Chọn lesson để học và theo dõi tiến bộ</div>
+          <div style={styles.subtitle}>
+            {displayName ? `Hi, ${displayName}` : "Hi"} • Chọn lesson để học và
+            theo dõi tiến bộ
+          </div>
         </div>
 
         <div style={styles.row}>
@@ -1238,12 +1542,18 @@ export default function StudentDashboard() {
         <div style={styles.col}>
           <div style={styles.colHeader}>
             <div style={styles.colTitle}>Lessons</div>
-            <div style={styles.pill}>{lessons.length} lessons</div>
+            <div style={styles.pill}>
+              {lessonsLoading ? "Loading..." : `${lessons.length} lessons`}
+            </div>
           </div>
 
           {/* Header row */}
           <div style={styles.legendRow}>
-            <div style={{ opacity: 0.78 }}>Chọn lesson để mở menu</div>
+            <div style={{ opacity: 0.78 }}>
+              {lessonsLoading
+                ? "Đang tải lesson summary..."
+                : "Chọn lesson để mở menu"}
+            </div>
             <div style={styles.legendRight}>
               <div style={{ fontWeight: 950, opacity: 0.92 }}>Prelearning</div>
               <div style={{ fontWeight: 950, opacity: 0.92 }}>Luyện tập</div>
@@ -1260,22 +1570,49 @@ export default function StudentDashboard() {
             ) : (
               lessons.map((l) => {
                 const active = l.id === expandedLessonId;
-                const pracScoreText = formatPracticeScore(l.practiceCorrect, l.practiceTotal, l.practicePct);
+                const pracScoreText = formatPracticeScore(
+                  l.practiceCorrect,
+                  l.practiceTotal,
+                  l.practicePct
+                );
 
                 return (
                   <div
                     key={l.id}
                     style={lessonRowStyle(active)}
                     onClick={() => setExpandedLessonId(active ? null : l.id)}
-                    onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)")}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.transform = "translateY(0px)")}
+                    onMouseEnter={(e) =>
+                      (((e.currentTarget as HTMLDivElement).style.transform =
+                        "translateY(-1px)"))
+                    }
+                    onMouseLeave={(e) =>
+                      (((e.currentTarget as HTMLDivElement).style.transform =
+                        "translateY(0px)"))
+                    }
                   >
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                      <div style={{ fontWeight: 900, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontWeight: 900,
+                          fontSize: 13,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
                         Lesson {l.order}: {l.title}
                       </div>
 
-                      <div style={{ display: "flex", gap: 10, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+                      <div
+                        style={{ display: "flex", gap: 10, alignItems: "center" }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <div style={tickBadge(l.prelearningDone)}>
                           <span>{l.prelearningDone ? "✅" : "⬜"}</span>
                           <span>Pre</span>
@@ -1284,31 +1621,65 @@ export default function StudentDashboard() {
                         <div style={tickBadge(l.practiceDone)}>
                           <span>{l.practiceDone ? "✅" : "⬜"}</span>
                           <span>Prac</span>
-                          {l.practiceDone && pracScoreText ? <span style={{ opacity: 0.9, fontWeight: 950 }}>• {pracScoreText}</span> : null}
+                          {l.practiceDone && pracScoreText ? (
+                            <span style={{ opacity: 0.9, fontWeight: 950 }}>
+                              • {pracScoreText}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     </div>
 
                     {active ? (
-                      <div style={styles.expandPanel} onClick={(e) => e.stopPropagation()}>
-                        <button style={menuItem(lessonTab === "materials")} onClick={() => setLessonTab("materials")}>
-                          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div
+                        style={styles.expandPanel}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          style={menuItem(lessonTab === "materials")}
+                          onClick={() => setLessonTab("materials")}
+                        >
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                            }}
+                          >
                             <span>📚</span>
                             <span>Tài liệu học tập</span>
                           </span>
                           <span style={{ opacity: 0.6, fontWeight: 950 }}>›</span>
                         </button>
 
-                        <button style={menuItem(lessonTab === "prelearning")} onClick={() => setLessonTab("prelearning")}>
-                          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <button
+                          style={menuItem(lessonTab === "prelearning")}
+                          onClick={() => setLessonTab("prelearning")}
+                        >
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                            }}
+                          >
                             <span>✅</span>
                             <span>Prelearning Activities</span>
                           </span>
                           <span style={{ opacity: 0.6, fontWeight: 950 }}>›</span>
                         </button>
 
-                        <button style={menuItem(lessonTab === "practice")} onClick={() => setLessonTab("practice")}>
-                          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <button
+                          style={menuItem(lessonTab === "practice")}
+                          onClick={() => setLessonTab("practice")}
+                        >
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                            }}
+                          >
                             <span>🎯</span>
                             <span>Luyện tập</span>
                           </span>
@@ -1319,7 +1690,9 @@ export default function StudentDashboard() {
 
                         {lessonTab === "materials" ? (
                           <div style={styles.cardMini}>
-                            <div style={{ fontWeight: 950, fontSize: 13 }}>Slide bài giảng</div>
+                            <div style={{ fontWeight: 950, fontSize: 13 }}>
+                              Slide bài giảng
+                            </div>
 
                             {!l.slidePath ? (
                               <div style={styles.muted}>
@@ -1330,7 +1703,12 @@ export default function StudentDashboard() {
                             ) : (
                               <>
                                 <div style={styles.tiny}>
-                                  Updated: <span style={{ opacity: 0.9 }}>{l.slideUpdatedAt ? safeDate(l.slideUpdatedAt) : "-"}</span>
+                                  Updated:{" "}
+                                  <span style={{ opacity: 0.9 }}>
+                                    {l.slideUpdatedAt
+                                      ? safeDate(l.slideUpdatedAt)
+                                      : "-"}
+                                  </span>
                                 </div>
 
                                 <div style={styles.btnRow}>
@@ -1346,8 +1724,14 @@ export default function StudentDashboard() {
                                   </button>
                                 </div>
 
-                                <div style={styles.tiny} title={l.slidePath ?? ""}>
-                                  slide_path: <span style={{ opacity: 0.85 }}>{l.slidePath}</span>
+                                <div
+                                  style={styles.tiny}
+                                  title={l.slidePath ?? ""}
+                                >
+                                  slide_path:{" "}
+                                  <span style={{ opacity: 0.85 }}>
+                                    {l.slidePath}
+                                  </span>
                                 </div>
                               </>
                             )}
@@ -1356,26 +1740,39 @@ export default function StudentDashboard() {
 
                         {lessonTab === "prelearning" ? (
                           <div style={styles.cardMini}>
-                            <div style={{ fontWeight: 950, fontSize: 13 }}>Prelearning</div>
+                            <div style={{ fontWeight: 950, fontSize: 13 }}>
+                              Prelearning
+                            </div>
 
                             {l.prelearningDone ? (
                               <>
                                 <div style={styles.muted}>
                                   Điểm gần nhất:{" "}
-                                  <b style={{ opacity: 0.95 }}>{l.prelearningScore != null ? `${l.prelearningScore}/10` : "-"}</b>{" "}
-                                  <span style={{ opacity: 0.65 }}>• {l.prelearningCreatedAt ? safeDate(l.prelearningCreatedAt) : ""}</span>
+                                  <b style={{ opacity: 0.95 }}>
+                                    {l.prelearningScore != null
+                                      ? `${l.prelearningScore}/10`
+                                      : "-"}
+                                  </b>{" "}
+                                  <span style={{ opacity: 0.65 }}>
+                                    •{" "}
+                                    {l.prelearningCreatedAt
+                                      ? safeDate(l.prelearningCreatedAt)
+                                      : ""}
+                                  </span>
                                 </div>
 
                                 <div style={styles.btnRow}>
-                                  <Link href={`/student/prelearning/${l.id}`} style={styles.btn as any}>
+                                  <Link
+                                    href={`/student/prelearning/${l.id}`}
+                                    style={styles.btn as any}
+                                  >
                                     Làm lại →
                                   </Link>
 
                                   <button
                                     style={styles.btnPrimary}
                                     onClick={() => {
-                                      setDetailLesson(l);
-                                      setDetailOpen(true);
+                                      void openPrelearningDetail(l);
                                     }}
                                   >
                                     Xem chi tiết →
@@ -1387,10 +1784,14 @@ export default function StudentDashboard() {
                                 <div style={styles.muted}>
                                   Bạn chưa làm prelearning cho lesson này.
                                   <br />
-                                  Làm trước buổi học để tutor biết bạn đang mạnh/yếu chỗ nào.
+                                  Làm trước buổi học để tutor biết bạn đang
+                                  mạnh/yếu chỗ nào.
                                 </div>
                                 <div style={styles.btnRow}>
-                                  <Link href={`/student/prelearning/${l.id}`} style={styles.btnPrimary as any}>
+                                  <Link
+                                    href={`/student/prelearning/${l.id}`}
+                                    style={styles.btnPrimary as any}
+                                  >
                                     Bắt đầu →
                                   </Link>
                                 </div>
@@ -1401,24 +1802,42 @@ export default function StudentDashboard() {
 
                         {lessonTab === "practice" ? (
                           <div style={styles.cardMini}>
-                            <div style={{ fontWeight: 950, fontSize: 13 }}>Luyện tập</div>
+                            <div style={{ fontWeight: 950, fontSize: 13 }}>
+                              Luyện tập
+                            </div>
 
                             {l.practiceDone ? (
                               <div style={styles.muted}>
                                 Điểm đã chốt (lần nộp đầu):{" "}
-                                <b style={{ opacity: 0.95 }}>{formatPracticeScore(l.practiceCorrect, l.practiceTotal, l.practicePct) || "—"}</b>{" "}
-                                <span style={{ opacity: 0.65 }}>• {l.practiceCreatedAt ? safeDate(l.practiceCreatedAt) : ""}</span>
+                                <b style={{ opacity: 0.95 }}>
+                                  {formatPracticeScore(
+                                    l.practiceCorrect,
+                                    l.practiceTotal,
+                                    l.practicePct
+                                  ) || "—"}
+                                </b>{" "}
+                                <span style={{ opacity: 0.65 }}>
+                                  •{" "}
+                                  {l.practiceCreatedAt
+                                    ? safeDate(l.practiceCreatedAt)
+                                    : ""}
+                                </span>
                               </div>
                             ) : (
                               <div style={styles.muted}>
-                                MVP: luyện tập sẽ có <b>điểm số</b> (không dùng % completion) để tránh “điền bừa”.
+                                MVP: luyện tập sẽ có <b>điểm số</b> (không dùng %
+                                completion) để tránh “điền bừa”.
                                 <br />
-                                Sau khi nộp bài lần đầu, điểm sẽ được chốt để theo dõi tiến bộ.
+                                Sau khi nộp bài lần đầu, điểm sẽ được chốt để
+                                theo dõi tiến bộ.
                               </div>
                             )}
 
                             <div style={styles.btnRow}>
-                              <Link href={`/student/practice?lessonId=${l.id}`} style={styles.btnPrimary as any}>
+                              <Link
+                                href={`/student/practice?lessonId=${l.id}`}
+                                style={styles.btnPrimary as any}
+                              >
                                 Đi tới luyện tập →
                               </Link>
                             </div>
@@ -1432,7 +1851,10 @@ export default function StudentDashboard() {
             )}
           </div>
 
-          <div style={{ marginTop: "auto", ...styles.tiny }}>Gợi ý: tick Pre/Practice giúp bạn nhìn nhanh lesson nào đang thiếu bước nào.</div>
+          <div style={{ marginTop: "auto", ...styles.tiny }}>
+            Gợi ý: tick Pre/Practice giúp bạn nhìn nhanh lesson nào đang thiếu
+            bước nào.
+          </div>
         </div>
 
         {/* Column 2: My classes */}
@@ -1444,8 +1866,12 @@ export default function StudentDashboard() {
 
           {/* ✅ Join class by code */}
           <div style={styles.cardMini}>
-            <div style={{ fontWeight: 950, fontSize: 13 }}>Join class bằng code</div>
-            <div style={styles.tiny}>Nhập code tutor cung cấp để vào lớp (ví dụ: ABC123).</div>
+            <div style={{ fontWeight: 950, fontSize: 13 }}>
+              Join class bằng code
+            </div>
+            <div style={styles.tiny}>
+              Nhập code tutor cung cấp để vào lớp (ví dụ: ABC123).
+            </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <input
@@ -1459,50 +1885,77 @@ export default function StudentDashboard() {
                 }}
                 aria-label="Join code input"
               />
-              <button style={styles.btnPrimary} onClick={joinClassByCode} disabled={joinLoading}>
+              <button
+                style={styles.btnPrimary}
+                onClick={joinClassByCode}
+                disabled={joinLoading}
+              >
                 {joinLoading ? "Joining…" : "Join →"}
               </button>
             </div>
 
             {joinMsg ? (
-              <div style={{ ...styles.tiny, color: joinMsg.startsWith("✅") ? "rgba(170,255,210,0.95)" : "var(--lip-error, #ffb4b4)" }}>
+              <div
+                style={{
+                  ...styles.tiny,
+                  color: joinMsg.startsWith("✅")
+                    ? "rgba(170,255,210,0.95)"
+                    : "var(--lip-error, #ffb4b4)",
+                }}
+              >
                 {joinMsg}
               </div>
             ) : null}
 
             <div style={styles.tiny}>
-              Nếu join bị lỗi “RLS”/“permission denied”: bạn chưa tạo RPC <b>join_class_by_code</b> (SECURITY DEFINER) ở DB.
+              Nếu join bị lỗi “RLS”/“permission denied”: bạn chưa tạo RPC{" "}
+              <b>join_class_by_code</b> (SECURITY DEFINER) ở DB.
             </div>
           </div>
 
           {/* Countdown T-2h */}
           <div style={styles.countdownCard}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-              <div style={{ fontWeight: 950, fontSize: 13 }}>⏳ Countdown (T-2h)</div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                alignItems: "baseline",
+              }}
+            >
+              <div style={{ fontWeight: 950, fontSize: 13 }}>
+                ⏳ Countdown (T-2h)
+              </div>
               <div style={styles.tiny}>{activeClass?.scheduleText ?? "-"}</div>
             </div>
 
             {countdownVM ? (
               <>
                 <div style={styles.tiny}>
-                  Buổi học tiếp theo: <b style={{ opacity: 0.95 }}>{countdownVM.nextStart.toLocaleString()}</b>
+                  Buổi học tiếp theo:{" "}
+                  <b style={{ opacity: 0.95 }}>
+                    {countdownVM.nextStart.toLocaleString()}
+                  </b>
                 </div>
 
                 <div style={styles.countdownBig}>{countdownVM.leftText}</div>
 
                 {!countdownVM.isLate ? (
                   <div style={styles.warn}>
-                    Hãy chắc chắn bạn đã làm <b>Prelearning Activities</b> trước khi đếm ngược này kết thúc.
+                    Hãy chắc chắn bạn đã làm <b>Prelearning Activities</b> trước
+                    khi đếm ngược này kết thúc.
                   </div>
                 ) : (
                   <div style={styles.warn}>
-                    ⏰ Đã tới hạn <b>2 tiếng trước buổi học</b>. Hãy làm <b>Prelearning Activities</b> ngay để kịp chuẩn bị.
+                    ⏰ Đã tới hạn <b>2 tiếng trước buổi học</b>. Hãy làm{" "}
+                    <b>Prelearning Activities</b> ngay để kịp chuẩn bị.
                   </div>
                 )}
               </>
             ) : (
               <div style={styles.muted}>
-                Chưa tính được buổi học tiếp theo (schedule thiếu hoặc sai format).
+                Chưa tính được buổi học tiếp theo (schedule thiếu hoặc sai
+                format).
                 <br />
                 Format khuyến nghị: <b>20:00 • T3, T5, T7</b>
               </div>
@@ -1533,18 +1986,35 @@ export default function StudentDashboard() {
                     gap: 10,
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                    <div style={{ fontWeight: 950, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontWeight: 950,
+                        fontSize: 14,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {c.name}
+                    </div>
                     <div style={styles.tiny}>
                       Tutor: <b style={{ opacity: 0.9 }}>{c.tutorName}</b>
                     </div>
                   </div>
 
                   <div style={styles.tiny}>
-                    Thời khóa biểu: <span style={{ opacity: 0.9 }}>{c.scheduleText}</span>
+                    Thời khóa biểu:{" "}
+                    <span style={{ opacity: 0.9 }}>{c.scheduleText}</span>
                   </div>
                   <div style={styles.tiny}>
-                    Join code: <span style={{ opacity: 0.9 }}>{c.joinCode ?? "-"}</span>
+                    Join code:{" "}
+                    <span style={{ opacity: 0.9 }}>{c.joinCode ?? "-"}</span>
                   </div>
 
                   <div style={styles.btnRow}>
@@ -1554,7 +2024,10 @@ export default function StudentDashboard() {
                     </Link>
 
                     {/* (giữ lại menu buổi học/prelearning nếu cần) */}
-                    <Link href={`/student/class/${c.id}`} style={styles.btn as any}>
+                    <Link
+                      href={`/student/class/${c.id}`}
+                      style={styles.btn as any}
+                    >
                       Class menu →
                     </Link>
                   </div>
@@ -1563,7 +2036,9 @@ export default function StudentDashboard() {
             </div>
           )}
 
-          <div style={{ marginTop: "auto", ...styles.tiny }}>MVP: schedule hiện placeholder. Sau này map từ DB để đúng từng lớp.</div>
+          <div style={{ marginTop: "auto", ...styles.tiny }}>
+            MVP: schedule hiện placeholder. Sau này map từ DB để đúng từng lớp.
+          </div>
         </div>
 
         {/* Column 3: My Vocabulary */}
@@ -1579,10 +2054,12 @@ export default function StudentDashboard() {
               Tổng số từ: <b style={{ opacity: 0.95 }}>{vocabTotal}</b>
             </div>
             <div style={styles.muted}>
-              Đã ghi nhớ (ước tính): <b style={{ opacity: 0.95 }}>{vocabMasteredPct}%</b>
+              Đã ghi nhớ (ước tính):{" "}
+              <b style={{ opacity: 0.95 }}>{vocabMasteredPct}%</b>
             </div>
             <div style={styles.tiny}>
-              MVP: trong trang MV sẽ có ôn luyện trắc nghiệm → hệ thống tổng kết đúng/sai → % “đã ghi nhớ” hiển thị ở dashboard.
+              MVP: trong trang MV sẽ có ôn luyện trắc nghiệm → hệ thống tổng kết
+              đúng/sai → % “đã ghi nhớ” hiển thị ở dashboard.
             </div>
           </div>
 
@@ -1593,7 +2070,8 @@ export default function StudentDashboard() {
           </div>
 
           <div style={{ marginTop: "auto", ...styles.tiny }}>
-            Gợi ý: bạn tự quyết định từ nào “mới với mình” và thêm vào kho — MV sẽ phản ánh đúng bạn nhất.
+            Gợi ý: bạn tự quyết định từ nào “mới với mình” và thêm vào kho — MV
+            sẽ phản ánh đúng bạn nhất.
           </div>
         </div>
 
@@ -1622,7 +2100,11 @@ export default function StudentDashboard() {
             >
               {me?.avatar_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={me.avatar_url} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                <img
+                  src={me.avatar_url}
+                  alt="avatar"
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
               ) : (
                 "🙂"
               )}
@@ -1630,32 +2112,44 @@ export default function StudentDashboard() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <div style={{ fontWeight: 950, fontSize: 14 }}>{displayName}</div>
-              <div style={styles.tiny}>User ID: {userId ? `${userId.slice(0, 8)}…` : "-"}</div>
+              <div style={styles.tiny}>
+                User ID: {userId ? `${userId.slice(0, 8)}…` : "-"}
+              </div>
             </div>
           </div>
 
           <div style={styles.cardMini}>
-            <div style={{ fontWeight: 950, fontSize: 13 }}>{profileSummary.title}</div>
+            <div style={{ fontWeight: 950, fontSize: 13 }}>
+              {profileSummary.title}
+            </div>
             <div style={{ ...styles.muted, lineHeight: 1.6 }}>
               {profileSummary.lines.map((line, idx) => (
                 <div key={idx}>• {line}</div>
               ))}
             </div>
-            <div style={styles.tiny}>MVP: summary hiện rule-based. Sau này thay bằng AI prompt “khen trước – minh bạch – truyền động lực”.</div>
+            <div style={styles.tiny}>
+              MVP: summary hiện rule-based. Sau này thay bằng AI prompt “khen
+              trước – minh bạch – truyền động lực”.
+            </div>
           </div>
 
           <div style={styles.btnRow}>
             <button
               style={styles.btnPrimary}
               onClick={() =>
-                alert("MVP: upload avatar + AI summary sẽ làm tiếp.\nAI sẽ luôn khen trước, động viên, nhưng vẫn nêu rõ mục tiêu cải thiện.")
+                alert(
+                  "MVP: upload avatar + AI summary sẽ làm tiếp.\nAI sẽ luôn khen trước, động viên, nhưng vẫn nêu rõ mục tiêu cải thiện."
+                )
               }
             >
               Update profile →
             </button>
           </div>
 
-          <div style={{ marginTop: "auto", ...styles.tiny }}>Nếu bạn muốn: mình sẽ thiết kế prompt AI profile summary đúng tone “khen trước – động lực – minh bạch”.</div>
+          <div style={{ marginTop: "auto", ...styles.tiny }}>
+            Nếu bạn muốn: mình sẽ thiết kế prompt AI profile summary đúng tone
+            “khen trước – động lực – minh bạch”.
+          </div>
         </div>
       </div>
 
@@ -1689,8 +2183,22 @@ export default function StudentDashboard() {
           }}
         >
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-              <div style={{ fontWeight: 950, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                alignItems: "center",
+              }}
+            >
+              <div
+                style={{
+                  fontWeight: 950,
+                  fontSize: 13,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
                 Lesson {slideLesson.order}: {slideLesson.title} — Slide
               </div>
 
@@ -1699,7 +2207,13 @@ export default function StudentDashboard() {
                 <button
                   style={styles.btnGhost}
                   disabled={!slideUrl}
-                  title={!slideUrl ? "Chưa có URL slide" : slideIsFullscreen ? "Thoát fullscreen" : "Fullscreen"}
+                  title={
+                    !slideUrl
+                      ? "Chưa có URL slide"
+                      : slideIsFullscreen
+                      ? "Thoát fullscreen"
+                      : "Fullscreen"
+                  }
                   onClick={async () => {
                     if (!slideUrl) return;
                     if (slideIsFullscreen) {
@@ -1715,7 +2229,11 @@ export default function StudentDashboard() {
                 <button
                   style={styles.btnGhost}
                   disabled={!slideUrl}
-                  title={!slideUrl ? "Chưa có URL slide" : "Mở tab mới để xem fullscreen"}
+                  title={
+                    !slideUrl
+                      ? "Chưa có URL slide"
+                      : "Mở tab mới để xem fullscreen"
+                  }
                   onClick={() => {
                     if (!slideUrl) return;
                     window.open(slideUrl, "_blank", "noopener,noreferrer");
@@ -1741,11 +2259,27 @@ export default function StudentDashboard() {
 
             <div style={styles.cardMini}>
               <div style={styles.tiny}>
-                Updated: <span style={{ opacity: 0.9 }}>{slideLesson.slideUpdatedAt ? safeDate(slideLesson.slideUpdatedAt) : "-"}</span>
+                Updated:{" "}
+                <span style={{ opacity: 0.9 }}>
+                  {slideLesson.slideUpdatedAt
+                    ? safeDate(slideLesson.slideUpdatedAt)
+                    : "-"}
+                </span>
               </div>
 
-              {slideLoading ? <div style={styles.muted}>Đang tải slide…</div> : null}
-              {slideErr ? <div style={{ ...styles.muted, color: "var(--lip-error, #ffb4b4)" }}>Error: {slideErr}</div> : null}
+              {slideLoading ? (
+                <div style={styles.muted}>Đang tải slide…</div>
+              ) : null}
+              {slideErr ? (
+                <div
+                  style={{
+                    ...styles.muted,
+                    color: "var(--lip-error, #ffb4b4)",
+                  }}
+                >
+                  Error: {slideErr}
+                </div>
+              ) : null}
 
               {!slideLoading && !slideErr && slideUrl ? (
                 <div
@@ -1754,7 +2288,8 @@ export default function StudentDashboard() {
                     height: "70vh",
                     borderRadius: 14,
                     overflow: "hidden",
-                    border: "1px solid var(--lip-border, rgba(255,255,255,0.12))",
+                    border:
+                      "1px solid var(--lip-border, rgba(255,255,255,0.12))",
                     background: "rgba(0,0,0,0.25)",
                   }}
                 >
@@ -1784,7 +2319,8 @@ export default function StudentDashboard() {
               {/* Hint */}
               {!slideErr && slideUrl ? (
                 <div style={styles.tiny} title="Gợi ý fullscreen">
-                  Tip: nếu browser không cho fullscreen trong modal, dùng <b>Open new tab</b> để xem toàn màn hình.
+                  Tip: nếu browser không cho fullscreen trong modal, dùng{" "}
+                  <b>Open new tab</b> để xem toàn màn hình.
                 </div>
               ) : null}
             </div>
@@ -1799,18 +2335,37 @@ export default function StudentDashboard() {
           onClick={() => {
             setDetailOpen(false);
             setDetailLesson(null);
+            setDetailErr("");
+            setDetailLoading(false);
           }}
         >
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-              <div style={{ fontWeight: 950, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis" }}>
-                Lesson {detailLesson.order}: {detailLesson.title} — Prelearning details
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                alignItems: "center",
+              }}
+            >
+              <div
+                style={{
+                  fontWeight: 950,
+                  fontSize: 13,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                Lesson {detailLesson.order}: {detailLesson.title} — Prelearning
+                details
               </div>
               <button
                 style={styles.btnGhost}
                 onClick={() => {
                   setDetailOpen(false);
                   setDetailLesson(null);
+                  setDetailErr("");
+                  setDetailLoading(false);
                 }}
               >
                 Close
@@ -1820,85 +2375,146 @@ export default function StudentDashboard() {
             <div style={styles.cardMini}>
               <div style={styles.muted}>
                 Điểm gần nhất:{" "}
-                <b style={{ opacity: 0.95 }}>{detailLesson.prelearningScore != null ? `${detailLesson.prelearningScore}/10` : "-"}</b>{" "}
-                <span style={{ opacity: 0.65 }}>• {detailLesson.prelearningCreatedAt ? safeDate(detailLesson.prelearningCreatedAt) : ""}</span>
+                <b style={{ opacity: 0.95 }}>
+                  {detailLesson.prelearningScore != null
+                    ? `${detailLesson.prelearningScore}/10`
+                    : "-"}
+                </b>{" "}
+                <span style={{ opacity: 0.65 }}>
+                  •{" "}
+                  {detailLesson.prelearningCreatedAt
+                    ? safeDate(detailLesson.prelearningCreatedAt)
+                    : ""}
+                </span>
               </div>
 
               {/* ✅ Show quiz + questions summary */}
               <div style={styles.tiny}>
                 Quiz:{" "}
                 <b style={{ opacity: 0.95 }}>
-                  {typeof detailLesson.latestAttempt?.pre_quiz_correct === "number" && typeof detailLesson.latestAttempt?.pre_quiz_total === "number"
+                  {typeof detailLesson.latestAttempt?.pre_quiz_correct ===
+                    "number" &&
+                  typeof detailLesson.latestAttempt?.pre_quiz_total === "number"
                     ? `${detailLesson.latestAttempt?.pre_quiz_correct}/${detailLesson.latestAttempt?.pre_quiz_total}`
                     : "—"}
                 </b>{" "}
                 • Questions:{" "}
-                <b style={{ opacity: 0.95 }}>{Array.isArray(detailLesson.latestAttempt?.questions) ? detailLesson.latestAttempt!.questions!.length : 0}</b>
+                <b style={{ opacity: 0.95 }}>
+                  {Array.isArray(detailLesson.latestAttempt?.questions)
+                    ? detailLesson.latestAttempt!.questions!.length
+                    : 0}
+                </b>
               </div>
 
-              <div style={styles.tiny}>MVP: show notebook thumbnails + quiz result + questions + feedback preview.</div>
+              <div style={styles.tiny}>
+                MVP: show notebook thumbnails + quiz result + questions + feedback
+                preview.
+              </div>
+
+              {detailLoading ? (
+                <div style={styles.muted}>Đang tải chi tiết prelearning…</div>
+              ) : null}
+
+              {detailErr ? (
+                <div
+                  style={{
+                    ...styles.muted,
+                    color: "var(--lip-error, #ffb4b4)",
+                  }}
+                >
+                  Error: {detailErr}
+                </div>
+              ) : null}
             </div>
 
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
-              <div style={{ fontWeight: 950, fontSize: 13 }}>Notebook images</div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: 10,
+              }}
+            >
+              <div style={{ fontWeight: 950, fontSize: 13 }}>
+                Notebook images
+              </div>
               <div style={styles.tiny}>Click ảnh để phóng to</div>
             </div>
 
             <div style={styles.gridImgs}>
-              {(detailLesson.latestAttempt?.notebook_images ?? []).filter(Boolean).map((u, idx) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={`${u}-${idx}`}
-                  src={u}
-                  alt={`notebook ${idx + 1}`}
-                  style={styles.imgThumb}
-                  onClick={() => {
-                    setLightboxNatural(null);
-                    setLightboxUrl(u);
-                    setLightboxOpen(true);
-                  }}
-                />
-              ))}
+              {(detailLesson.latestAttempt?.notebook_images ?? [])
+                .filter(Boolean)
+                .map((u, idx) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={`${u}-${idx}`}
+                    src={u}
+                    alt={`notebook ${idx + 1}`}
+                    style={styles.imgThumb}
+                    onClick={() => {
+                      setLightboxNatural(null);
+                      setLightboxUrl(u);
+                      setLightboxOpen(true);
+                    }}
+                  />
+                ))}
 
-              {(detailLesson.latestAttempt?.notebook_images ?? []).length === 0 ? (
-                <div style={styles.muted}>Chưa có ảnh notebook (signed) trong attempt này.</div>
+              {(detailLesson.latestAttempt?.notebook_images ?? []).length ===
+              0 ? (
+                <div style={styles.muted}>
+                  {detailLoading
+                    ? "Đang tạo signed URL cho ảnh notebook…"
+                    : "Chưa có ảnh notebook (signed) trong attempt này."}
+                </div>
               ) : null}
             </div>
 
             {/* ✅ Quiz details (optional preview) */}
             <div style={styles.cardMini}>
-              <div style={{ fontWeight: 950, fontSize: 13 }}>Quiz + Questions</div>
+              <div style={{ fontWeight: 950, fontSize: 13 }}>
+                Quiz + Questions
+              </div>
 
               <div style={styles.tiny}>
                 Pre-quiz:{" "}
                 <b style={{ opacity: 0.95 }}>
-                  {typeof detailLesson.latestAttempt?.pre_quiz_correct === "number" && typeof detailLesson.latestAttempt?.pre_quiz_total === "number"
+                  {typeof detailLesson.latestAttempt?.pre_quiz_correct ===
+                    "number" &&
+                  typeof detailLesson.latestAttempt?.pre_quiz_total === "number"
                     ? `${detailLesson.latestAttempt?.pre_quiz_correct}/${detailLesson.latestAttempt?.pre_quiz_total}`
                     : "—"}
                 </b>
               </div>
 
-              {Array.isArray(detailLesson.latestAttempt?.questions) && detailLesson.latestAttempt!.questions!.length > 0 ? (
+              {Array.isArray(detailLesson.latestAttempt?.questions) &&
+              detailLesson.latestAttempt!.questions!.length > 0 ? (
                 <div style={{ ...styles.muted, lineHeight: 1.6 }}>
                   {detailLesson.latestAttempt!.questions!.slice(0, 10).map((q, i) => (
                     <div key={i}>• {q}</div>
                   ))}
                 </div>
               ) : (
-                <div style={styles.tiny}>Chưa có câu hỏi nào được lưu trong attempt này.</div>
+                <div style={styles.tiny}>
+                  {detailLoading
+                    ? "Đang tải questions..."
+                    : "Chưa có câu hỏi nào được lưu trong attempt này."}
+                </div>
               )}
 
-              <div style={styles.tiny}>(MVP) Nếu cần show đáp án đúng/sai từng câu, mình sẽ render từ quiz_payload + quiz_answers.</div>
+              <div style={styles.tiny}>
+                (MVP) Nếu cần show đáp án đúng/sai từng câu, mình sẽ render từ
+                quiz_payload + quiz_answers.
+              </div>
             </div>
 
             {/* ✅ AI feedback: human-friendly + optional raw JSON */}
-            <AiFeedbackPreview
-              raw={detailLesson.latestAttempt?.ai_feedback}
-              styles={styles}
-            />
+            <AiFeedbackPreview raw={detailLesson.latestAttempt?.ai_feedback} styles={styles} />
 
             <div style={styles.btnRow}>
-              <Link href={`/student/prelearning/${detailLesson.id}`} style={styles.btnPrimary as any}>
+              <Link
+                href={`/student/prelearning/${detailLesson.id}`}
+                style={styles.btnPrimary as any}
+              >
                 Làm lại prelearning →
               </Link>
             </div>
@@ -1923,12 +2539,28 @@ export default function StudentDashboard() {
               border: "1px solid var(--lip-border, rgba(255,255,255,0.14))",
               background: "var(--lip-modal-bg, rgba(16,16,16,0.92))",
               padding: 12,
-              boxShadow: "var(--lip-shadow-strong, 0 18px 60px rgba(0,0,0,0.35))",
+              boxShadow:
+                "var(--lip-shadow-strong, 0 18px 60px rgba(0,0,0,0.35))",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-              <div style={{ fontWeight: 950, fontSize: 13, display: "flex", gap: 10, alignItems: "center" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                alignItems: "center",
+              }}
+            >
+              <div
+                style={{
+                  fontWeight: 950,
+                  fontSize: 13,
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "center",
+                }}
+              >
                 <span>Notebook image</span>
                 {lightboxNatural ? (
                   <span style={styles.tiny}>
@@ -1965,7 +2597,11 @@ export default function StudentDashboard() {
                 alt="notebook full"
                 onLoad={(e) => {
                   const img = e.currentTarget;
-                  if (img?.naturalWidth && img?.naturalHeight) setLightboxNatural({ w: img.naturalWidth, h: img.naturalHeight });
+                  if (img?.naturalWidth && img?.naturalHeight)
+                    setLightboxNatural({
+                      w: img.naturalWidth,
+                      h: img.naturalHeight,
+                    });
                 }}
                 style={{
                   maxWidth: "100%",
@@ -2002,7 +2638,9 @@ function AiFeedbackPreview({
 
   const normalized = useMemo(() => normalizeAiFeedback(raw), [raw]);
   const hasAny =
-    normalized.notebook.length > 0 || normalized.questions.length > 0 || normalized.rewrite.length > 0;
+    normalized.notebook.length > 0 ||
+    normalized.questions.length > 0 ||
+    normalized.rewrite.length > 0;
 
   return (
     <div style={styles.cardMini as any}>
@@ -2033,7 +2671,9 @@ function AiFeedbackPreview({
                   ))}
                 </ul>
               ) : (
-                <div style={styles.feedbackEmpty as any}>Chưa có nhận xét notebook.</div>
+                <div style={styles.feedbackEmpty as any}>
+                  Chưa có nhận xét notebook.
+                </div>
               )}
             </div>
 
@@ -2046,7 +2686,9 @@ function AiFeedbackPreview({
                   ))}
                 </ul>
               ) : (
-                <div style={styles.feedbackEmpty as any}>Chưa có nhận xét questions.</div>
+                <div style={styles.feedbackEmpty as any}>
+                  Chưa có nhận xét questions.
+                </div>
               )}
             </div>
 
@@ -2059,7 +2701,9 @@ function AiFeedbackPreview({
                   ))}
                 </ul>
               ) : (
-                <div style={styles.feedbackEmpty as any}>Chưa có gợi ý rewrite.</div>
+                <div style={styles.feedbackEmpty as any}>
+                  Chưa có gợi ý rewrite.
+                </div>
               )}
             </div>
           </div>
@@ -2079,7 +2723,9 @@ function AiFeedbackPreview({
         </div>
       )}
 
-      {showRaw ? <pre style={styles.rawBox as any}>{stringifySafe(raw)}</pre> : null}
+      {showRaw ? (
+        <pre style={styles.rawBox as any}>{stringifySafe(raw)}</pre>
+      ) : null}
     </div>
   );
 }
