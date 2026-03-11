@@ -159,8 +159,8 @@ async function sha256Hex(file: File): Promise<string> {
 function normalizeTitle(s: string) {
   return (s ?? "")
     .toLowerCase()
-    .replace(/lesson\s*\d+\s*[:\-–—]?\s*/g, "") // remove "lesson 1:" prefix variants
-    .replace(/[^\p{L}\p{N}]+/gu, " ") // keep letters/numbers
+    .replace(/lesson\s*\d+\s*[:\-–—]?\s*/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -168,11 +168,9 @@ function normalizeTitle(s: string) {
 function findTruthForLesson(lesson: LessonRow | null) {
   if (!lesson) return null;
 
-  // 1) direct by UUID (works for template class)
   const direct = (TRUTH_GROUND as any)?.[lesson.id];
   if (direct) return direct;
 
-  // 2) fallback by title (works for cloned lessons because title stays the same)
   const targetNorm = normalizeTitle(lesson.title);
   if (!targetNorm) return null;
 
@@ -186,7 +184,6 @@ function findTruthForLesson(lesson: LessonRow | null) {
     if (norm && norm === targetNorm) return t;
   }
 
-  // 3) fallback by order_index if a truth item has it (optional)
   for (const t of values) {
     const oi =
       (typeof t?.order_index === "number" && t.order_index) ||
@@ -223,7 +220,6 @@ export default function PrelearningWizardPage() {
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizErr, setQuizErr] = useState<string>("");
 
-  // ✅ Chống double-call + chống overwrite set:
   const requestIdRef = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -238,10 +234,8 @@ export default function PrelearningWizardPage() {
 
   const [showWrongDetails, setShowWrongDetails] = useState(false);
 
-  // ✅ seed cho attempt hiện tại
   const [seed, setSeed] = useState<string>(() => makeSeed());
 
-  // ✅ file input ref (custom button to avoid "missing Choose file" issue)
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -269,7 +263,6 @@ export default function PrelearningWizardPage() {
     })();
   }, [lessonId, router]);
 
-  // ✅ IMPORTANT: truth lookup must work for cloned lessons (lessonId changes)
   const truth = useMemo(() => findTruthForLesson(lesson), [lesson]);
 
   const checklistText: string = useMemo(() => {
@@ -353,7 +346,6 @@ export default function PrelearningWizardPage() {
     setNotebookErr("");
     setNotebookLoading(false);
 
-    // cancel in-flight quiz request if any
     abortRef.current?.abort();
     abortRef.current = null;
     requestIdRef.current += 1;
@@ -390,10 +382,8 @@ export default function PrelearningWizardPage() {
     try {
       const fd = new FormData();
 
-      // ✅ allow unlimited images (append all)
       notebookImages.forEach((f) => fd.append("files", f));
 
-      // ✅ include checklist text so backend can score against it even if it changes later
       fd.append("lessonTitle", lesson.title);
       fd.append("lessonId", lesson.id);
       fd.append("requiredNotes", checklistText || "");
@@ -421,8 +411,6 @@ export default function PrelearningWizardPage() {
       };
 
       setNotebookEval(out);
-
-      // ✅ Move to step 2; quiz will be generated EXACTLY ONCE when step=2
       setStep(2);
     } catch (e: any) {
       setNotebookErr(e.message ?? "Unknown error");
@@ -434,11 +422,9 @@ export default function PrelearningWizardPage() {
   async function generateQuizOnce() {
     if (!lesson) return;
 
-    // Prevent double-call
     if (quizLoading) return;
     if (quiz?.questions?.length) return;
 
-    // cancel older request
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -452,25 +438,27 @@ export default function PrelearningWizardPage() {
       const res = await fetch("/api/prelearning/generate-quiz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lessonTitle: lesson.title }),
+        body: JSON.stringify({
+          lessonId: lesson.id,
+          lessonTitle: lesson.title,
+        }),
         signal: ac.signal,
       });
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (myReqId !== requestIdRef.current) return; // stale
+        if (myReqId !== requestIdRef.current) return;
         setQuizErr(data?.error ?? "Generate quiz failed");
         return;
       }
 
       const qs: QuizQ[] = Array.isArray(data.questions) ? data.questions : [];
       if (!qs.length) {
-        if (myReqId !== requestIdRef.current) return; // stale
+        if (myReqId !== requestIdRef.current) return;
         setQuizErr("Quiz rỗng (không có câu hỏi).");
         return;
       }
 
-      // ✅ Only accept latest request result
       if (myReqId !== requestIdRef.current) return;
 
       setQuiz({ questions: qs });
@@ -484,7 +472,6 @@ export default function PrelearningWizardPage() {
     }
   }
 
-  // ✅ Generate quiz only when entering Step 2 (NOT prefetch from Step 1)
   useEffect(() => {
     if (!lesson) return;
     if (step !== 2) return;
@@ -576,7 +563,6 @@ export default function PrelearningWizardPage() {
         return;
       }
 
-      // ✅ Upload ALL notebook images
       const filesToUpload = notebookImages;
 
       if (!filesToUpload.length) {
@@ -631,7 +617,6 @@ export default function PrelearningWizardPage() {
         quiz_answers: quizAnswers,
         questions: cleaned,
 
-        // ✅ persist required notes (so tutor/admin can audit later)
         required_notes: checklistText || "",
 
         ai_feedback: {
@@ -760,7 +745,6 @@ export default function PrelearningWizardPage() {
           </div>
         </div>
 
-        {/* Summary cards */}
         <div style={{ marginTop: 14, ...cardStyle }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ fontWeight: 900, color: "var(--text-muted)" }}>Progress</div>
@@ -836,9 +820,7 @@ export default function PrelearningWizardPage() {
         </div>
 
         <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 14 }}>
-          {/* Main */}
           <div style={cardStyle}>
-            {/* Step 1 */}
             {step === 1 && (
               <>
                 <div style={{ fontSize: 16, fontWeight: 900 }}>Step 1 — Upload ảnh vở (JPEG/PNG)</div>
@@ -894,7 +876,6 @@ export default function PrelearningWizardPage() {
                   )}
                 </div>
 
-                {/* ✅ Custom choose-file button (fix "missing Choose file" + still supports multiple) */}
                 <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                   <input
                     ref={fileInputRef}
@@ -905,7 +886,6 @@ export default function PrelearningWizardPage() {
                     onChange={(e) => {
                       const arr = Array.from(e.target.files ?? []);
                       setNotebookImages(arr);
-                      // allow re-select same files again
                       e.currentTarget.value = "";
                     }}
                   />
@@ -975,7 +955,6 @@ export default function PrelearningWizardPage() {
               </>
             )}
 
-            {/* Step 2 */}
             {step === 2 && (
               <>
                 <div style={{ fontSize: 16, fontWeight: 900 }}>Step 2 — Quiz</div>
@@ -1081,7 +1060,6 @@ export default function PrelearningWizardPage() {
               </>
             )}
 
-            {/* Step 3 */}
             {step === 3 && (
               <>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
@@ -1099,40 +1077,40 @@ export default function PrelearningWizardPage() {
                 <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
                   {questions.map((q, idx) => (
                     <div
-  key={idx}
-  style={{
-    display: "flex",
-    gap: 10,
-    alignItems: "stretch",
-    background: "var(--bg-soft)",
-    border: "1px solid var(--border)",
-    borderRadius: 12,
-    padding: 12,
-  }}
->
+                      key={idx}
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        alignItems: "stretch",
+                        background: "var(--bg-soft)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: 12,
+                      }}
+                    >
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 6, fontWeight: 900 }}>
                           Câu hỏi {idx + 1}
                         </div>
                         <textarea
-  value={q}
-  onChange={(e) => updateQuestionRow(idx, e.target.value)}
-  placeholder={`Ví dụ: "Why do we use 'does' with he/she/it?"`}
-  rows={3}
-  style={{
-    width: "100%",
-    borderRadius: 12,
-    border: "2px solid var(--border)",
-    background: "white",
-    color: "#111",
-    padding: "14px 14px",
-    outline: "none",
-    fontSize: 15,
-    lineHeight: 1.6,
-    resize: "vertical",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-  }}
-/>
+                          value={q}
+                          onChange={(e) => updateQuestionRow(idx, e.target.value)}
+                          placeholder={`Ví dụ: "Why do we use 'does' with he/she/it?"`}
+                          rows={3}
+                          style={{
+                            width: "100%",
+                            borderRadius: 12,
+                            border: "2px solid var(--border)",
+                            background: "white",
+                            color: "#111",
+                            padding: "14px 14px",
+                            outline: "none",
+                            fontSize: 15,
+                            lineHeight: 1.6,
+                            resize: "vertical",
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+                          }}
+                        />
                       </div>
 
                       <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
@@ -1175,7 +1153,6 @@ export default function PrelearningWizardPage() {
               </>
             )}
 
-            {/* Step 4 */}
             {step === 4 && (
               <>
                 <div style={{ fontSize: 20, fontWeight: 950 }}>Done — Kết quả Pre-learning</div>
@@ -1374,7 +1351,6 @@ export default function PrelearningWizardPage() {
             )}
           </div>
 
-          {/* Side panel */}
           <div style={cardStyle}>
             <div style={{ fontWeight: 900 }}>Guidance</div>
             <div style={{ marginTop: 10, color: "var(--text-muted)", fontSize: 14, lineHeight: 1.8 }}>
