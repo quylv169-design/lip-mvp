@@ -27,6 +27,19 @@ type LessonDraft = {
   practiceJson: string;
 };
 
+type ImportedQuestionInput = {
+  question_text?: string;
+  instruction_vi?: string;
+  instruction_en?: string;
+  sentence_en?: string;
+  options?: string[];
+  answer_index?: number;
+  explanation_vi?: string;
+  skill_tag?: string;
+  difficulty?: "easy" | "medium" | "hard";
+  is_active?: boolean;
+};
+
 const UI_FONT =
   'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"';
 
@@ -53,6 +66,10 @@ export default function AdminPage() {
     {}
   );
   const [addingLesson, setAddingLesson] = useState(false);
+
+  const [prelearningCounts, setPrelearningCounts] = useState<Record<string, number>>(
+    {}
+  );
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewTitle, setViewTitle] = useState<string>("");
@@ -127,6 +144,7 @@ export default function AdminPage() {
       if (!selectedClassId) {
         setLessons([]);
         setExpandedLessonId(null);
+        setPrelearningCounts({});
         return;
       }
       setMsg("");
@@ -155,6 +173,29 @@ export default function AdminPage() {
         }
         return next;
       });
+
+      const lessonIds = nextLessons.map((l) => l.id);
+      if (lessonIds.length > 0) {
+        const { data: qbRows, error: qbErr } = await supabase
+          .from("question_bank")
+          .select("lesson_id")
+          .in("lesson_id", lessonIds)
+          .eq("question_type", "prelearning")
+          .eq("is_active", true);
+
+        if (!qbErr) {
+          const counts: Record<string, number> = {};
+          for (const lessonId of lessonIds) counts[lessonId] = 0;
+          for (const row of (qbRows ?? []) as { lesson_id: string }[]) {
+            counts[row.lesson_id] = (counts[row.lesson_id] ?? 0) + 1;
+          }
+          setPrelearningCounts(counts);
+        } else {
+          setPrelearningCounts({});
+        }
+      } else {
+        setPrelearningCounts({});
+      }
 
       if (nextLessons.length > 0 && !expandedLessonId) {
         setExpandedLessonId(nextLessons[0].id);
@@ -203,17 +244,116 @@ export default function AdminPage() {
     }));
   }
 
+  function parseJsonArray(raw: string): { ok: true; items: unknown[] } | { ok: false; error: string } {
+    const text = raw.trim();
+
+    if (!text) {
+      return { ok: false, error: "Nội dung đang trống." };
+    }
+
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) {
+        return { ok: false, error: "JSON phải là một array." };
+      }
+      return { ok: true, items: parsed as unknown[] };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: `JSON không hợp lệ: ${detail}` };
+    }
+  }
+
+  function validateJsonArray(raw: string, sectionLabel: string): boolean {
+    const result = parseJsonArray(raw);
+    if (!result.ok) {
+      setMsg(`❌ ${sectionLabel}: ${result.error}`);
+      return false;
+    }
+    setMsg(`✅ ${sectionLabel} hợp lệ. Tìm thấy ${result.items.length} item.`);
+    return true;
+  }
+
+  function normalizeImportedQuestion(item: unknown, index: number): ImportedQuestionInput {
+    const obj = (item ?? {}) as Record<string, unknown>;
+
+    return {
+      question_text:
+        typeof obj.question_text === "string" ? obj.question_text.trim() : "",
+      instruction_vi:
+        typeof obj.instruction_vi === "string" ? obj.instruction_vi.trim() : "",
+      instruction_en:
+        typeof obj.instruction_en === "string" ? obj.instruction_en.trim() : "",
+      sentence_en:
+        typeof obj.sentence_en === "string" ? obj.sentence_en.trim() : "",
+      options: Array.isArray(obj.options)
+        ? obj.options.map((x) => String(x ?? "").trim())
+        : [],
+      answer_index:
+        typeof obj.answer_index === "number"
+          ? obj.answer_index
+          : Number(obj.answer_index ?? -1),
+      explanation_vi:
+        typeof obj.explanation_vi === "string" ? obj.explanation_vi.trim() : "",
+      skill_tag:
+        typeof obj.skill_tag === "string" ? obj.skill_tag.trim() : `prelearning_skill_${index + 1}`,
+      difficulty:
+        obj.difficulty === "easy" || obj.difficulty === "medium" || obj.difficulty === "hard"
+          ? obj.difficulty
+          : "easy",
+      is_active:
+        typeof obj.is_active === "boolean" ? obj.is_active : true,
+    };
+  }
+
+  function validateImportedQuestions(items: unknown[]): { ok: true; rows: ImportedQuestionInput[] } | { ok: false; error: string } {
+    if (items.length === 0) {
+      return { ok: false, error: "JSON array đang rỗng." };
+    }
+
+    const rows = items.map((item, index) => normalizeImportedQuestion(item, index));
+
+    for (let i = 0; i < rows.length; i += 1) {
+      const q = rows[i];
+      const n = i + 1;
+
+      if (!q.question_text) {
+        return { ok: false, error: `Câu ${n} thiếu question_text.` };
+      }
+
+      if (!Array.isArray(q.options) || q.options.length !== 4) {
+        return { ok: false, error: `Câu ${n} phải có đúng 4 options.` };
+      }
+
+      if (q.options.some((opt) => !opt || !opt.trim())) {
+        return { ok: false, error: `Câu ${n} có option đang rỗng.` };
+      }
+
+      if (!Number.isInteger(q.answer_index) || q.answer_index < 0 || q.answer_index > 3) {
+        return { ok: false, error: `Câu ${n} có answer_index không hợp lệ. Chỉ được 0–3.` };
+      }
+
+      if (!q.skill_tag) {
+        return { ok: false, error: `Câu ${n} thiếu skill_tag.` };
+      }
+    }
+
+    return { ok: true, rows };
+  }
+
   function getContentSummary(lessonId: string) {
     const draft = getDraft(lessonId);
 
     const truthState = draft.truthSource.trim() ? "Filled" : "Empty";
 
     const prelearningState = (() => {
+      const dbCount = prelearningCounts[lessonId] ?? 0;
+      if (dbCount > 0) return `${dbCount} saved`;
+
       const raw = draft.prelearningJson.trim();
       if (!raw) return "Empty";
       try {
         const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? `${parsed.length} items` : "Filled";
+        return Array.isArray(parsed) ? `${parsed.length} draft` : "Draft";
       } catch {
         return "Draft";
       }
@@ -288,6 +428,7 @@ export default function AdminPage() {
         ...prev,
         [newLesson.id]: { ...EMPTY_DRAFT },
       }));
+      setPrelearningCounts((prev) => ({ ...prev, [newLesson.id]: 0 }));
       setExpandedLessonId(newLesson.id);
       setMsg(`✅ Đã tạo lesson mới: ${newLesson.title}`);
     } finally {
@@ -299,26 +440,69 @@ export default function AdminPage() {
     setExpandedLessonId((prev) => (prev === lessonId ? null : lessonId));
   }
 
-  function validateJsonArray(raw: string, sectionLabel: string): boolean {
-    const text = raw.trim();
-
-    if (!text) {
-      setMsg(`⚠️ ${sectionLabel} đang trống.`);
-      return false;
+  async function savePrelearningToSupabase(lesson: LessonRow) {
+    const raw = getDraft(lesson.id).prelearningJson;
+    const parsed = parseJsonArray(raw);
+    if (!parsed.ok) {
+      setMsg(`❌ ${lesson.title} — Prelearning Quiz: ${parsed.error}`);
+      return;
     }
 
+    const validated = validateImportedQuestions(parsed.items);
+    if (!validated.ok) {
+      setMsg(`❌ ${lesson.title} — Prelearning Quiz: ${validated.error}`);
+      return;
+    }
+
+    setBusyLessonId(lesson.id);
+    setMsg("");
+
     try {
-      const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed)) {
-        setMsg(`❌ ${sectionLabel} phải là JSON array.`);
-        return false;
+      const rows = validated.rows.map((q) => ({
+        lesson_id: lesson.id,
+        question_type: "prelearning",
+        question_text: q.question_text ?? "",
+        instruction_vi: q.instruction_vi ?? "",
+        instruction_en: q.instruction_en ?? "",
+        sentence_en: q.sentence_en ?? "",
+        options: q.options ?? [],
+        answer_index: q.answer_index ?? 0,
+        explanation_vi: q.explanation_vi ?? "",
+        skill_tag: q.skill_tag ?? "",
+        difficulty: q.difficulty ?? "easy",
+        is_active: q.is_active ?? true,
+      }));
+
+      const { error: deleteErr } = await supabase
+        .from("question_bank")
+        .delete()
+        .eq("lesson_id", lesson.id)
+        .eq("question_type", "prelearning");
+
+      if (deleteErr) {
+        setMsg(`❌ ${lesson.title} — Xóa prelearning cũ lỗi: ${deleteErr.message}`);
+        return;
       }
-      setMsg(`✅ ${sectionLabel} hợp lệ. Tìm thấy ${parsed.length} item.`);
-      return true;
-    } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e);
-      setMsg(`❌ ${sectionLabel} không phải JSON hợp lệ.\n${detail}`);
-      return false;
+
+      const { error: insertErr } = await supabase
+        .from("question_bank")
+        .insert(rows);
+
+      if (insertErr) {
+        setMsg(`❌ ${lesson.title} — Save prelearning lỗi: ${insertErr.message}`);
+        return;
+      }
+
+      setPrelearningCounts((prev) => ({
+        ...prev,
+        [lesson.id]: rows.filter((r) => r.is_active).length,
+      }));
+
+      setMsg(
+        `✅ ${lesson.title} — Đã lưu ${rows.length} câu prelearning vào question_bank.`
+      );
+    } finally {
+      setBusyLessonId(null);
     }
   }
 
@@ -340,43 +524,26 @@ export default function AdminPage() {
     }
 
     if (section === "prelearningJson") {
-      if (
-        !validateJsonArray(
-          draft.prelearningJson,
-          `${lesson.title} — Prelearning Quiz`
-        )
-      ) {
-        return;
-      }
-      setMsg(
-        `ℹ️ ${lesson.title} — Prelearning Quiz JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase vì bạn chưa tạo bảng prelearning question bank.`
-      );
+      void savePrelearningToSupabase(lesson);
       return;
     }
 
     if (section === "theoryJson") {
-      if (
-        !validateJsonArray(draft.theoryJson, `${lesson.title} — Theory Questions`)
-      ) {
+      if (!validateJsonArray(draft.theoryJson, `${lesson.title} — Theory Questions`)) {
         return;
       }
       setMsg(
-        `ℹ️ ${lesson.title} — Theory Questions JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase vì bạn chưa tạo bảng theory question bank.`
+        `ℹ️ ${lesson.title} — Theory Questions JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase.`
       );
       return;
     }
 
     if (section === "practiceJson") {
-      if (
-        !validateJsonArray(
-          draft.practiceJson,
-          `${lesson.title} — Practice Questions`
-        )
-      ) {
+      if (!validateJsonArray(draft.practiceJson, `${lesson.title} — Practice Questions`)) {
         return;
       }
       setMsg(
-        `ℹ️ ${lesson.title} — Practice Questions JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase vì bạn chưa tạo bảng practice question bank.`
+        `ℹ️ ${lesson.title} — Practice Questions JSON hợp lệ.\nHiện mới validate ở UI, chưa import xuống Supabase.`
       );
       return;
     }
@@ -824,8 +991,7 @@ export default function AdminPage() {
               marginTop: 4,
             }}
           >
-            Quản lý lesson theo dạng accordion. Slide đã save thật, các content
-            bank đang ở bước UI draft.
+            Quản lý lesson theo dạng accordion. Slide đã save thật, prelearning đã save thật vào question_bank.
           </div>
         </div>
 
@@ -1356,7 +1522,7 @@ export default function AdminPage() {
                                     e.target.value
                                   )
                                 }
-                                placeholder={`[\n  {\n    "question_text": "Choose the correct answer",\n    "options": ["A", "B", "C", "D"],\n    "answer_index": 0\n  }\n]`}
+                                placeholder={`[\n  {\n    "question_text": "Choose the correct answer",\n    "instruction_vi": "Chọn đáp án đúng",\n    "instruction_en": "Choose the correct answer",\n    "sentence_en": "She ___ to school every day.",\n    "options": ["go", "goes", "going", "went"],\n    "answer_index": 1,\n    "explanation_vi": "Với she, động từ thêm -s/-es.",\n    "skill_tag": "present_simple_s_es",\n    "difficulty": "easy",\n    "is_active": true\n  }\n]`}
                                 style={{
                                   width: "100%",
                                   minHeight: 180,
@@ -1406,7 +1572,12 @@ export default function AdminPage() {
                                       `${l.title} — Prelearning Quiz`
                                     )
                                   }
-                                  style={secondaryButtonStyle}
+                                  style={{
+                                    ...secondaryButtonStyle,
+                                    opacity: busy ? 0.55 : 1,
+                                    cursor: busy ? "not-allowed" : "pointer",
+                                  }}
+                                  disabled={busy}
                                 >
                                   Validate JSON
                                 </button>
@@ -1415,9 +1586,14 @@ export default function AdminPage() {
                                   onClick={() =>
                                     saveSectionDraft(l, "prelearningJson")
                                   }
-                                  style={secondaryButtonStyle}
+                                  style={{
+                                    ...secondaryButtonStyle,
+                                    opacity: busy ? 0.55 : 1,
+                                    cursor: busy ? "not-allowed" : "pointer",
+                                  }}
+                                  disabled={busy}
                                 >
-                                  Save Prelearning
+                                  {busy ? "Saving..." : "Save Prelearning"}
                                 </button>
                               </div>
                             </div>
@@ -1567,8 +1743,7 @@ export default function AdminPage() {
         Nếu upload báo permission denied, bạn cần sửa policy WRITE để cho phép
         role=admin.
         <br />
-        Các phần Truth / Prelearning / Theory / Practice hiện mới là UI draft để
-        chốt workflow.
+        Truth / Theory / Practice vẫn là UI draft. Prelearning đã save thật xuống question_bank.
       </div>
     </div>
   );
