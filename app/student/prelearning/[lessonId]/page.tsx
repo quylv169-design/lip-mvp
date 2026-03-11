@@ -13,6 +13,12 @@ type LessonRow = {
   order_index: number;
 };
 
+type LessonTruthRow = {
+  lesson_id: string;
+  required_notes: string | null;
+  rubric?: unknown;
+};
+
 type NotebookEval = {
   content_score: number; // 0-4
   presentation_score: number; // 0-2
@@ -206,6 +212,9 @@ export default function PrelearningWizardPage() {
   const [lesson, setLesson] = useState<LessonRow | null>(null);
   const [lessonErr, setLessonErr] = useState<string>("");
 
+  const [dbRequiredNotes, setDbRequiredNotes] = useState<string>("");
+  const [truthDbLoaded, setTruthDbLoaded] = useState(false);
+
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
   const [notebookImages, setNotebookImages] = useState<File[]>([]);
@@ -263,13 +272,40 @@ export default function PrelearningWizardPage() {
     })();
   }, [lessonId, router]);
 
+  useEffect(() => {
+    (async () => {
+      if (!lessonId) return;
+
+      setTruthDbLoaded(false);
+      setDbRequiredNotes("");
+
+      const { data, error } = await supabase
+        .from("lesson_truth")
+        .select("lesson_id, required_notes")
+        .eq("lesson_id", lessonId)
+        .maybeSingle();
+
+      if (!error && data) {
+        const row = data as LessonTruthRow;
+        setDbRequiredNotes((row.required_notes ?? "").trim());
+      }
+
+      setTruthDbLoaded(true);
+    })();
+  }, [lessonId]);
+
   const truth = useMemo(() => findTruthForLesson(lesson), [lesson]);
 
-  const checklistText: string = useMemo(() => {
+  const fallbackChecklistText: string = useMemo(() => {
     const raw = (truth as any)?.checklistForStudents;
     if (typeof raw !== "string") return "";
     return raw.trim();
   }, [truth]);
+
+  const checklistText: string = useMemo(() => {
+    if (dbRequiredNotes.trim()) return dbRequiredNotes.trim();
+    return fallbackChecklistText;
+  }, [dbRequiredNotes, fallbackChecklistText]);
 
   const quizTotal = quiz?.questions?.length ?? 0;
 
@@ -865,11 +901,17 @@ export default function PrelearningWizardPage() {
                         </pre>
                       ) : (
                         <div style={{ color: "var(--text-muted)", fontSize: 14, lineHeight: 1.7 }}>
-                          ⚠️ Chưa có nội dung bắt buộc cho lesson này. (Nếu lesson là bản clone, hệ thống sẽ match theo title;
-                          bạn kiểm tra TRUTH_GROUND có title tương ứng.)
+                          ⚠️ Chưa có nội dung bắt buộc cho lesson này.
                         </div>
                       )}
                       <div style={{ marginTop: 10, color: "var(--text-faint)", fontSize: 13, lineHeight: 1.7 }}>
+                        {truthDbLoaded && dbRequiredNotes.trim() ? (
+                          <>Đang dùng <b style={{ color: "var(--text-primary)" }}>Truth Source từ Supabase</b>.</>
+                        ) : (
+                          <>Đang dùng <b style={{ color: "var(--text-primary)" }}>fallback từ TRUTH_GROUND</b>.</>
+                        )}
+                      </div>
+                      <div style={{ marginTop: 6, color: "var(--text-faint)", fontSize: 13, lineHeight: 1.7 }}>
                         Bạn <b style={{ color: "var(--text-primary)" }}>bắt buộc</b> phải chép đúng các ý trên.
                       </div>
                     </div>
