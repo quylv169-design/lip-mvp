@@ -21,6 +21,17 @@ type SavedAttempt = {
   created_at: string;
 };
 
+type QuestionBankRow = {
+  id: string;
+  lesson_id: string;
+  question_type: "theory" | "practice";
+  question_text: string | null;
+  options: unknown;
+  answer_index: number | null;
+  explanation_vi: string | null;
+  is_active: boolean | null;
+};
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -36,6 +47,14 @@ function shuffleArray<T>(arr: T[]) {
 
 function stripLeadingQuestionNumber(text: string) {
   return text.replace(/^\s*\d+\)\s*/, "").trim();
+}
+
+function normalizeOptions(v: unknown): Array<{ text: string }> {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean)
+    .map((text) => ({ text }));
 }
 
 /**
@@ -92,6 +111,85 @@ function mergeLessonBanks(
   };
 }
 
+function buildBankFromDbRows(
+  lessonId: string,
+  rows: QuestionBankRow[]
+): PracticeLessonBank | null {
+  const theoryRows = rows.filter(
+    (r) => r.question_type === "theory" && r.is_active !== false
+  );
+  const practiceRows = rows.filter(
+    (r) => r.question_type === "practice" && r.is_active !== false
+  );
+
+  const sections: PracticeLessonBank["sections"] = [];
+
+  if (theoryRows.length > 0) {
+    sections.push({
+      id: "db-theory",
+      titleVi: "Lý thuyết",
+      titleEn: "Theory",
+      questions: theoryRows
+        .map((row, idx) => {
+          const choices = normalizeOptions(row.options);
+          const answerIndex =
+            typeof row.answer_index === "number" ? row.answer_index : -1;
+          const prompt = String(row.question_text ?? "").trim();
+
+          if (!prompt || choices.length !== 4 || answerIndex < 0 || answerIndex > 3) {
+            return null;
+          }
+
+          return {
+            id: `db-theory-${row.id || idx + 1}`,
+            prompt,
+            choices,
+            answerIndex,
+            explainVi: String(row.explanation_vi ?? "").trim(),
+          };
+        })
+        .filter(Boolean) as PracticeLessonBank["sections"][number]["questions"],
+    });
+  }
+
+  if (practiceRows.length > 0) {
+    sections.push({
+      id: "db-practice",
+      titleVi: "Thực hành",
+      titleEn: "Practice",
+      questions: practiceRows
+        .map((row, idx) => {
+          const choices = normalizeOptions(row.options);
+          const answerIndex =
+            typeof row.answer_index === "number" ? row.answer_index : -1;
+          const prompt = String(row.question_text ?? "").trim();
+
+          if (!prompt || choices.length !== 4 || answerIndex < 0 || answerIndex > 3) {
+            return null;
+          }
+
+          return {
+            id: `db-practice-${row.id || idx + 1}`,
+            prompt,
+            choices,
+            answerIndex,
+            explainVi: String(row.explanation_vi ?? "").trim(),
+          };
+        })
+        .filter(Boolean) as PracticeLessonBank["sections"][number]["questions"],
+    });
+  }
+
+  const cleanedSections = sections.filter((s) => s.questions.length > 0);
+
+  if (!cleanedSections.length) return null;
+
+  return {
+    lessonId,
+    sections: cleanedSections,
+  };
+}
+
 /**
  * ✅ Next.js build (Vercel prerender) requires useSearchParams() to be used
  * inside a component wrapped by <Suspense />.
@@ -122,6 +220,10 @@ function PracticeInner() {
 
   // Attempt bank (shuffled choices each reset/lesson change)
   const [attemptBank, setAttemptBank] = useState<PracticeLessonBank | null>(null);
+
+  // DB-first bank
+  const [dbBank, setDbBank] = useState<PracticeLessonBank | null>(null);
+  const [dbBankLoading, setDbBankLoading] = useState(false);
 
   // ✅ Saved/locked attempt (first submission only)
   const [savedAttempt, setSavedAttempt] = useState<SavedAttempt | null>(null);
@@ -201,7 +303,9 @@ function PracticeInner() {
       setLessons(rows);
 
       // chọn lesson theo URL nếu có, nếu không thì lấy lesson đầu tiên
-      const initial = rows.some((l) => l.id === lessonIdFromUrl) ? lessonIdFromUrl : rows[0]?.id || "";
+      const initial = rows.some((l) => l.id === lessonIdFromUrl)
+        ? lessonIdFromUrl
+        : rows[0]?.id || "";
       setSelectedLessonId(initial);
 
       setBooting(false);
@@ -215,13 +319,15 @@ function PracticeInner() {
     const current = (searchParams.get("lessonId") || "").trim();
     if (current === selectedLessonId) return;
 
-    const url = `/student/practice?lessonId=${encodeURIComponent(selectedLessonId)}`;
+    const url = `/student/practice?lessonId=${encodeURIComponent(
+      selectedLessonId
+    )}`;
     router.replace(url);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLessonId]);
 
-  // Bank gốc cho lesson hiện tại (merge THEORY + PRACTICE, theory phải lên trước)
-  const mergedBank: PracticeLessonBank | null = useMemo(() => {
+  // Hard-code fallback bank gốc cho lesson hiện tại
+  const fallbackMergedBank: PracticeLessonBank | null = useMemo(() => {
     if (!selectedLessonId) return null;
 
     const practice = PRACTICE_BANK[selectedLessonId] ?? null;
@@ -232,6 +338,51 @@ function PracticeInner() {
       { key: "practice", bank: practice },
     ]);
   }, [selectedLessonId]);
+
+  // Load DB bank for selected lesson
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setDbBank(null);
+
+      if (!selectedLessonId) return;
+
+      setDbBankLoading(true);
+
+      const { data, error } = await supabase
+        .from("question_bank")
+        .select(
+          "id,lesson_id,question_type,question_text,options,answer_index,explanation_vi,is_active"
+        )
+        .eq("lesson_id", selectedLessonId)
+        .in("question_type", ["theory", "practice"]);
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Load question_bank failed:", error.message);
+        setDbBank(null);
+        setDbBankLoading(false);
+        return;
+      }
+
+      const rows = ((data as QuestionBankRow[]) ?? []).filter(Boolean);
+      const built = buildBankFromDbRows(selectedLessonId, rows);
+      setDbBank(built);
+      setDbBankLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLessonId]);
+
+  // Final merged bank: DB first, hard-code fallback
+  const mergedBank: PracticeLessonBank | null = useMemo(() => {
+    if (dbBank) return dbBank;
+    return fallbackMergedBank;
+  }, [dbBank, fallbackMergedBank]);
 
   // Khi mergedBank đổi -> tạo attemptBank mới (shuffle choices) + reset attempt
   useEffect(() => {
@@ -292,6 +443,8 @@ function PracticeInner() {
     if (!row) return "Chọn lesson…";
     return `Lesson ${row.order_index}: ${row.title}`;
   }, [lessons, selectedLessonId]);
+
+  const usingDbBank = !!dbBank;
 
   const totalQuestions = useMemo(() => {
     if (!attemptBank) return 0;
@@ -393,7 +546,9 @@ function PracticeInner() {
     // ✅ GUARD: must complete all questions
     if (answeredCount < totalQuestions) {
       setSubmitted(false);
-      setGuardMsg(`Bạn mới làm được ${answeredCount}/${totalQuestions} câu. Hãy hoàn thành hết trước khi ấn Submit nhé.`);
+      setGuardMsg(
+        `Bạn mới làm được ${answeredCount}/${totalQuestions} câu. Hãy hoàn thành hết trước khi ấn Submit nhé.`
+      );
       return;
     }
 
@@ -401,7 +556,9 @@ function PracticeInner() {
 
     // If already locked in DB, do not change anything
     if (savedAttempt) {
-      setSaveMsg("✅ Điểm năng lực đã được chốt từ lần đầu. Bạn có thể làm lại để luyện tập.");
+      setSaveMsg(
+        "✅ Điểm năng lực đã được chốt từ lần đầu. Bạn có thể làm lại để luyện tập."
+      );
       return;
     }
 
@@ -441,7 +598,9 @@ function PracticeInner() {
             });
             setSaveMsg("✅ Điểm năng lực đã tồn tại từ lần trước (đã chốt).");
           } else {
-            setSaveMsg("⚠️ Không lưu được điểm (đã có điểm trước đó), nhưng không đọc lại được từ DB.");
+            setSaveMsg(
+              "⚠️ Không lưu được điểm (đã có điểm trước đó), nhưng không đọc lại được từ DB."
+            );
           }
         } else {
           console.error(error);
@@ -504,7 +663,11 @@ function PracticeInner() {
     minHeight: 180,
   };
 
-  const submitDisabled = !attemptBank || totalQuestions === 0 || saving || answeredCount < totalQuestions;
+  const submitDisabled =
+    !attemptBank ||
+    totalQuestions === 0 ||
+    saving ||
+    answeredCount < totalQuestions;
 
   return (
     <div style={pageStyle}>
@@ -521,9 +684,12 @@ function PracticeInner() {
           }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <div style={{ fontSize: 18, fontWeight: 900 }}>Luyện tập / Practice</div>
+            <div style={{ fontSize: 18, fontWeight: 900 }}>
+              Luyện tập / Practice
+            </div>
             <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
-              Chọn lesson để luyện ngay trong trang này. Nếu vào từ Dashboard theo lesson X, trang sẽ tự mở đúng lesson X.
+              Chọn lesson để luyện ngay trong trang này. Nếu vào từ Dashboard theo
+              lesson X, trang sẽ tự mở đúng lesson X.
             </div>
           </div>
 
@@ -606,7 +772,9 @@ function PracticeInner() {
                 >
                   {selectedLessonLabel}
                 </div>
-                <div style={{ color: "var(--text-muted)", fontWeight: 900 }}>▾</div>
+                <div style={{ color: "var(--text-muted)", fontWeight: 900 }}>
+                  ▾
+                </div>
               </div>
 
               <select
@@ -630,19 +798,41 @@ function PracticeInner() {
               </select>
             </div>
 
-            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-              Tip: Link sẽ giữ <b>lessonId</b> trên URL để bạn refresh vẫn không mất lesson đang luyện.
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--text-muted)",
+                lineHeight: 1.6,
+              }}
+            >
+              Tip: Link sẽ giữ <b>lessonId</b> trên URL để bạn refresh vẫn không
+              mất lesson đang luyện.
             </div>
 
             <div style={{ marginTop: 6, borderTop: `1px solid var(--border)`, paddingTop: 10 }}>
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>Kết quả / Result</div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+              <div style={{ fontWeight: 900, marginBottom: 6 }}>
+                Kết quả / Result
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                  lineHeight: 1.6,
+                }}
+              >
                 Đã chọn:{" "}
                 <b>
-                  Lesson {lessons.find((l) => l.id === selectedLessonId)?.order_index ?? "-"}: {lessonTitle || "-"}
+                  Lesson{" "}
+                  {lessons.find((l) => l.id === selectedLessonId)?.order_index ??
+                    "-"}
+                  : {lessonTitle || "-"}
                 </b>
                 <br />
                 Tổng câu: <b>{totalQuestions}</b>
+                <br />
+                Nguồn câu hỏi:{" "}
+                <b>{usingDbBank ? "Supabase question_bank" : "Hard-code fallback"}</b>
+                {dbBankLoading ? <> (đang kiểm tra DB...)</> : null}
               </div>
 
               {lockedScore ? (
@@ -659,27 +849,49 @@ function PracticeInner() {
                 >
                   {lockedScore.locked ? (
                     <>
-                      🔒 <b>Điểm năng lực (đã chốt)</b>: <b>{lockedScore.correct}</b> / {lockedScore.total} (≈{" "}
+                      🔒 <b>Điểm năng lực (đã chốt)</b>:{" "}
+                      <b>{lockedScore.correct}</b> / {lockedScore.total} (≈{" "}
                       <b>{lockedScore.pct}%</b>)
                     </>
                   ) : (
                     <>
-                      ✅ <b>Kết quả lần làm này</b>: <b>{lockedScore.correct}</b> / {lockedScore.total} (≈{" "}
+                      ✅ <b>Kết quả lần làm này</b>:{" "}
+                      <b>{lockedScore.correct}</b> / {lockedScore.total} (≈{" "}
                       <b>{lockedScore.pct}%</b>)
-                      <div style={{ marginTop: 6, color: "var(--text-muted)" }}>
-                        (Chưa chốt điểm năng lực. Bấm <b>Nộp bài</b> lần đầu sẽ chốt vào hồ sơ.)
+                      <div
+                        style={{
+                          marginTop: 6,
+                          color: "var(--text-muted)",
+                        }}
+                      >
+                        (Chưa chốt điểm năng lực. Bấm <b>Nộp bài</b> lần đầu sẽ
+                        chốt vào hồ sơ.)
                       </div>
                     </>
                   )}
                 </div>
               ) : (
-                <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                <div
+                  style={{
+                    marginTop: 12,
+                    fontSize: 12,
+                    color: "var(--text-muted)",
+                    lineHeight: 1.6,
+                  }}
+                >
                   Làm xong rồi bấm <b>Nộp bài</b> để xem đáp án & giải thích.
                 </div>
               )}
 
               {saveMsg ? (
-                <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                <div
+                  style={{
+                    marginTop: 10,
+                    fontSize: 12,
+                    color: "var(--text-muted)",
+                    lineHeight: 1.6,
+                  }}
+                >
                   {saveMsg}
                 </div>
               ) : null}
@@ -703,7 +915,13 @@ function PracticeInner() {
               ) : null}
             </div>
 
-            <div style={{ marginTop: "auto", fontSize: 11, color: "var(--text-faint)" }}>
+            <div
+              style={{
+                marginTop: "auto",
+                fontSize: 11,
+                color: "var(--text-faint)",
+              }}
+            >
               User: {userId ? `${userId.slice(0, 8)}…` : "-"}
             </div>
           </div>
@@ -722,9 +940,13 @@ function PracticeInner() {
           >
             {!attemptBank ? (
               <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6 }}>
-                Chưa có bài tập cho lesson này trong “bank”.
+                Chưa có bài tập cho lesson này.
                 <br />
-                (MVP) Bạn có thể thêm bank theo lessonId trong file: <b>lib/practice/bank.ts</b>
+                Trang này hiện chạy theo hướng:
+                <br />
+                - ưu tiên đọc từ <b>question_bank</b>
+                <br />
+                - nếu DB chưa có thì fallback về <b>lib/practice/bank.ts</b>
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -740,10 +962,25 @@ function PracticeInner() {
                   >
                     <div style={{ fontWeight: 950, color: "var(--text-primary)" }}>
                       {sec.titleVi}
-                      <span style={{ color: "var(--text-muted)", fontWeight: 700 }}> — {sec.titleEn}</span>
+                      <span
+                        style={{
+                          color: "var(--text-muted)",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {" "}
+                        — {sec.titleEn}
+                      </span>
                     </div>
 
-                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div
+                      style={{
+                        marginTop: 10,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 12,
+                      }}
+                    >
                       {sec.questions.map((q) => {
                         const chosen = answers[q.id];
                         const show = submitted;
@@ -760,7 +997,13 @@ function PracticeInner() {
                               padding: 10,
                             }}
                           >
-                            <div style={{ fontWeight: 800, marginBottom: 8, color: "var(--text-primary)" }}>
+                            <div
+                              style={{
+                                fontWeight: 800,
+                                marginBottom: 8,
+                                color: "var(--text-primary)",
+                              }}
+                            >
                               {questionNo}) {promptText}
                             </div>
 
@@ -774,10 +1017,12 @@ function PracticeInner() {
 
                                 if (show) {
                                   if (isCorrect) {
-                                    border = "1px solid rgba(34,197,94,0.40)";
+                                    border =
+                                      "1px solid rgba(34,197,94,0.40)";
                                     bg = "rgba(34,197,94,0.08)";
                                   } else if (isChosen && !isCorrect) {
-                                    border = "1px solid rgba(220,38,38,0.35)";
+                                    border =
+                                      "1px solid rgba(220,38,38,0.35)";
                                     bg = "rgba(220,38,38,0.06)";
                                   }
                                 } else if (isChosen) {
@@ -786,7 +1031,11 @@ function PracticeInner() {
                                 }
 
                                 const showIcon = show && isChosen;
-                                const icon = showIcon ? (isCorrect ? "✅" : "❌") : "";
+                                const icon = showIcon
+                                  ? isCorrect
+                                    ? "✅"
+                                    : "❌"
+                                  : "";
 
                                 return (
                                   <button
@@ -806,8 +1055,16 @@ function PracticeInner() {
                                       gap: 8,
                                     }}
                                   >
-                                    <span style={{ width: 22, display: "inline-flex", justifyContent: "center" }}>
-                                      {showIcon ? icon : String.fromCharCode(65 + idx) + "."}
+                                    <span
+                                      style={{
+                                        width: 22,
+                                        display: "inline-flex",
+                                        justifyContent: "center",
+                                      }}
+                                    >
+                                      {showIcon
+                                        ? icon
+                                        : String.fromCharCode(65 + idx) + "."}
                                     </span>
                                     <span>{c.text}</span>
                                   </button>
@@ -834,7 +1091,9 @@ function PracticeInner() {
                                 }}
                               >
                                 <span style={{ marginTop: 1 }}>💡</span>
-                                <span>{(q as any).explainVi || "Chưa có giải thích."}</span>
+                                <span>
+                                  {(q as any).explainVi || "Chưa có giải thích."}
+                                </span>
                               </div>
                             ) : null}
                           </div>
@@ -861,12 +1120,15 @@ function PracticeInner() {
                   <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                     {savedAttempt ? (
                       <>
-                        🔒 Điểm năng lực (đã chốt): <b>{savedAttempt.correct_count}</b> / {savedAttempt.total_count} (≈{" "}
+                        🔒 Điểm năng lực (đã chốt):{" "}
+                        <b>{savedAttempt.correct_count}</b> /{" "}
+                        {savedAttempt.total_count} (≈{" "}
                         <b>{savedAttempt.pct}%</b>)
                       </>
                     ) : submitted ? (
                       <>
-                        ✅ Kết quả lần làm này: <b>{scoreVM.correct}</b> / {scoreVM.total} (≈ <b>{scoreVM.pct}%</b>)
+                        ✅ Kết quả lần làm này: <b>{scoreVM.correct}</b> /{" "}
+                        {scoreVM.total} (≈ <b>{scoreVM.pct}%</b>)
                       </>
                     ) : (
                       <>
@@ -938,7 +1200,15 @@ function PracticeInner() {
                 ) : null}
 
                 {saveMsg ? (
-                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>{saveMsg}</div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-muted)",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {saveMsg}
+                  </div>
                 ) : null}
               </div>
             )}
