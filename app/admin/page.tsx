@@ -53,7 +53,8 @@ type SectionStatus = {
 
 type LessonTruthRow = {
   lesson_id: string;
-  content: string | null;
+  required_notes: string | null;
+  rubric?: unknown;
 };
 
 type QuestionBankRow = {
@@ -227,16 +228,16 @@ export default function AdminPage() {
       if (lessonIds.length > 0) {
         const { data: truthRows, error: truthErr } = await supabase
           .from("lesson_truth")
-          .select("lesson_id,content")
+          .select("lesson_id,required_notes,rubric")
           .in("lesson_id", lessonIds);
 
         if (!truthErr) {
           for (const row of (truthRows ?? []) as LessonTruthRow[]) {
             if (!nextDrafts[row.lesson_id]) continue;
-            nextDrafts[row.lesson_id].truthSource = row.content ?? "";
+            nextDrafts[row.lesson_id].truthSource = row.required_notes ?? "";
             nextStatus[row.lesson_id].truthSource = {
               kind: "loaded",
-              text: row.content?.trim()
+              text: row.required_notes?.trim()
                 ? "Loaded from database"
                 : "No saved truth source yet",
             };
@@ -639,7 +640,7 @@ export default function AdminPage() {
   }
 
   async function saveTruthSource(lesson: LessonRow) {
-    const content = getDraft(lesson.id).truthSource.trim();
+    const requiredNotes = getDraft(lesson.id).truthSource.trim();
 
     setBusyLessonId(lesson.id);
     setSectionState(lesson.id, "truthSource", {
@@ -651,7 +652,9 @@ export default function AdminPage() {
       const { error } = await supabase.from("lesson_truth").upsert(
         {
           lesson_id: lesson.id,
-          content,
+          required_notes: requiredNotes,
+          rubric: {},
+          updated_at: new Date().toISOString(),
         },
         {
           onConflict: "lesson_id",
@@ -669,8 +672,8 @@ export default function AdminPage() {
 
       setSectionState(lesson.id, "truthSource", {
         kind: "success",
-        text: content
-          ? "Saved successfully to lesson_truth"
+        text: requiredNotes
+          ? "Saved successfully to lesson_truth.required_notes"
           : "Saved empty truth source",
       });
       setMsg(`✅ ${lesson.title} — Truth Source đã lưu thành công.`);
@@ -1720,7 +1723,7 @@ export default function AdminPage() {
 
                           {sectionCard(
                             "2) Truth Source",
-                            "Paste lesson knowledge text here. 1 lesson = 1 row in lesson_truth.",
+                            "Paste lesson knowledge text here. Saved into lesson_truth.required_notes.",
                             <div>
                               <textarea
                                 value={getDraft(l.id).truthSource}
@@ -1731,7 +1734,7 @@ export default function AdminPage() {
                                     e.target.value
                                   )
                                 }
-                                placeholder="Paste truth source / lesson notes here..."
+                                placeholder="Paste truth source / required notes here..."
                                 style={{
                                   width: "100%",
                                   minHeight: 180,
@@ -2052,7 +2055,7 @@ export default function AdminPage() {
       >
         Lưu ý:
         <br />
-        - Truth Source lưu kiểu 1 lesson = 1 row trong lesson_truth.
+        - Truth Source đang lưu vào lesson_truth.required_notes.
         <br />
         - Prelearning / Theory / Practice lưu kiểu replace set trong question_bank.
         <br />
