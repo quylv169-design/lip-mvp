@@ -178,193 +178,196 @@ export default function AdminPage() {
     })();
   }, [router]);
 
-  useEffect(() => {
-    (async () => {
-      if (!selectedClassId) {
-        setLessons([]);
-        setExpandedLessonId(null);
-        setCountsByLesson({});
-        setLessonDrafts({});
-        setSectionStatus({});
-        return;
+  async function loadClassContent(classId: string) {
+    if (!classId) {
+      setLessons([]);
+      setExpandedLessonId(null);
+      setCountsByLesson({});
+      setLessonDrafts({});
+      setSectionStatus({});
+      return;
+    }
+
+    setMsg("");
+
+    const { data, error } = await supabase
+      .from("lessons")
+      .select("id,class_id,title,order_index,slide_path,slide_updated_at")
+      .eq("class_id", classId)
+      .order("order_index", { ascending: true });
+
+    if (error) {
+      setMsg("Load lessons lỗi: " + error.message);
+      setLessons([]);
+      setExpandedLessonId(null);
+      setCountsByLesson({});
+      setLessonDrafts({});
+      setSectionStatus({});
+      return;
+    }
+
+    const nextLessons = (data as LessonRow[]) ?? [];
+    setLessons(nextLessons);
+
+    const lessonIds = nextLessons.map((l) => l.id);
+    const nextDrafts: Record<string, LessonDraft> = {};
+    const nextStatus: Record<string, Record<SectionKey, SectionStatus>> = {};
+    const nextCounts: Record<
+      string,
+      { prelearning: number; theory: number; practice: number }
+    > = {};
+
+    for (const lesson of nextLessons) {
+      nextDrafts[lesson.id] = { ...EMPTY_DRAFT };
+      nextStatus[lesson.id] = {
+        truthSource: { kind: "loading", text: "Loading from database..." },
+        prelearningJson: { kind: "loading", text: "Loading from database..." },
+        theoryJson: { kind: "loading", text: "Loading from database..." },
+        practiceJson: { kind: "loading", text: "Loading from database..." },
+      };
+      nextCounts[lesson.id] = { prelearning: 0, theory: 0, practice: 0 };
+    }
+
+    if (lessonIds.length > 0) {
+      const { data: truthRows, error: truthErr } = await supabase
+        .from("lesson_truth")
+        .select("lesson_id,required_notes,rubric")
+        .in("lesson_id", lessonIds);
+
+      if (!truthErr) {
+        for (const row of (truthRows ?? []) as LessonTruthRow[]) {
+          if (!nextDrafts[row.lesson_id]) continue;
+          nextDrafts[row.lesson_id].truthSource = row.required_notes ?? "";
+          nextStatus[row.lesson_id].truthSource = {
+            kind: "loaded",
+            text: row.required_notes?.trim()
+              ? "Loaded from database"
+              : "No saved truth source yet",
+          };
+        }
+      } else {
+        for (const lessonId of lessonIds) {
+          nextStatus[lessonId].truthSource = {
+            kind: "error",
+            text: "Load failed: " + truthErr.message,
+          };
+        }
       }
 
-      setMsg("");
-
-      const { data, error } = await supabase
-        .from("lessons")
-        .select("id,class_id,title,order_index,slide_path,slide_updated_at")
-        .eq("class_id", selectedClassId)
-        .order("order_index", { ascending: true });
-
-      if (error) {
-        setMsg("Load lessons lỗi: " + error.message);
-        setLessons([]);
-        return;
+      for (const lessonId of lessonIds) {
+        if (nextStatus[lessonId].truthSource.kind === "loading") {
+          nextStatus[lessonId].truthSource = {
+            kind: "loaded",
+            text: "No saved truth source yet",
+          };
+        }
       }
 
-      const nextLessons = (data as LessonRow[]) ?? [];
-      setLessons(nextLessons);
+      const { data: qbRows, error: qbErr } = await supabase
+        .from("question_bank")
+        .select(
+          "lesson_id,question_type,question_text,instruction_vi,instruction_en,sentence_en,options,answer_index,explanation_vi,skill_tag,difficulty,is_active"
+        )
+        .in("lesson_id", lessonIds)
+        .in("question_type", ["prelearning", "theory", "practice"]);
 
-      const lessonIds = nextLessons.map((l) => l.id);
-      const nextDrafts: Record<string, LessonDraft> = {};
-      const nextStatus: Record<string, Record<SectionKey, SectionStatus>> = {};
-      const nextCounts: Record<
-        string,
-        { prelearning: number; theory: number; practice: number }
-      > = {};
+      if (!qbErr) {
+        const grouped: Record<
+          string,
+          { prelearning: unknown[]; theory: unknown[]; practice: unknown[] }
+        > = {};
 
-      for (const lesson of nextLessons) {
-        nextDrafts[lesson.id] = { ...EMPTY_DRAFT };
-        nextStatus[lesson.id] = {
-          truthSource: { kind: "loading", text: "Loading from database..." },
-          prelearningJson: { kind: "loading", text: "Loading from database..." },
-          theoryJson: { kind: "loading", text: "Loading from database..." },
-          practiceJson: { kind: "loading", text: "Loading from database..." },
-        };
-        nextCounts[lesson.id] = { prelearning: 0, theory: 0, practice: 0 };
-      }
+        for (const lessonId of lessonIds) {
+          grouped[lessonId] = { prelearning: [], theory: [], practice: [] };
+        }
 
-      if (lessonIds.length > 0) {
-        const { data: truthRows, error: truthErr } = await supabase
-          .from("lesson_truth")
-          .select("lesson_id,required_notes,rubric")
-          .in("lesson_id", lessonIds);
+        for (const row of (qbRows ?? []) as QuestionBankRow[]) {
+          const lid = row.lesson_id;
+          const type = row.question_type as "prelearning" | "theory" | "practice";
+          if (!grouped[lid] || !(type in grouped[lid])) continue;
 
-        if (!truthErr) {
-          for (const row of (truthRows ?? []) as LessonTruthRow[]) {
-            if (!nextDrafts[row.lesson_id]) continue;
-            nextDrafts[row.lesson_id].truthSource = row.required_notes ?? "";
-            nextStatus[row.lesson_id].truthSource = {
-              kind: "loaded",
-              text: row.required_notes?.trim()
-                ? "Loaded from database"
-                : "No saved truth source yet",
-            };
-          }
-        } else {
-          for (const lessonId of lessonIds) {
-            nextStatus[lessonId].truthSource = {
-              kind: "error",
-              text: "Load failed: " + truthErr.message,
-            };
+          const normalized = {
+            question_text: row.question_text ?? "",
+            instruction_vi: row.instruction_vi ?? "",
+            instruction_en: row.instruction_en ?? "",
+            sentence_en: row.sentence_en ?? "",
+            options: Array.isArray(row.options) ? row.options : [],
+            answer_index:
+              typeof row.answer_index === "number" ? row.answer_index : 0,
+            explanation_vi: row.explanation_vi ?? "",
+            skill_tag: row.skill_tag ?? "",
+            difficulty:
+              row.difficulty === "easy" ||
+              row.difficulty === "medium" ||
+              row.difficulty === "hard"
+                ? row.difficulty
+                : "easy",
+            is_active: row.is_active ?? true,
+          };
+
+          grouped[lid][type].push(normalized);
+          if (normalized.is_active) {
+            nextCounts[lid][type] += 1;
           }
         }
 
         for (const lessonId of lessonIds) {
-          if (nextStatus[lessonId].truthSource.kind === "loading") {
-            nextStatus[lessonId].truthSource = {
-              kind: "loaded",
-              text: "No saved truth source yet",
-            };
-          }
+          nextDrafts[lessonId].prelearningJson = grouped[lessonId].prelearning.length
+            ? JSON.stringify(grouped[lessonId].prelearning, null, 2)
+            : "";
+          nextDrafts[lessonId].theoryJson = grouped[lessonId].theory.length
+            ? JSON.stringify(grouped[lessonId].theory, null, 2)
+            : "";
+          nextDrafts[lessonId].practiceJson = grouped[lessonId].practice.length
+            ? JSON.stringify(grouped[lessonId].practice, null, 2)
+            : "";
+
+          nextStatus[lessonId].prelearningJson = {
+            kind: "loaded",
+            text: grouped[lessonId].prelearning.length
+              ? `Loaded ${grouped[lessonId].prelearning.length} questions from database`
+              : "No saved prelearning questions yet",
+          };
+          nextStatus[lessonId].theoryJson = {
+            kind: "loaded",
+            text: grouped[lessonId].theory.length
+              ? `Loaded ${grouped[lessonId].theory.length} questions from database`
+              : "No saved theory questions yet",
+          };
+          nextStatus[lessonId].practiceJson = {
+            kind: "loaded",
+            text: grouped[lessonId].practice.length
+              ? `Loaded ${grouped[lessonId].practice.length} questions from database`
+              : "No saved practice questions yet",
+          };
         }
-
-        const { data: qbRows, error: qbErr } = await supabase
-          .from("question_bank")
-          .select(
-            "lesson_id,question_type,question_text,instruction_vi,instruction_en,sentence_en,options,answer_index,explanation_vi,skill_tag,difficulty,is_active"
-          )
-          .in("lesson_id", lessonIds)
-          .in("question_type", ["prelearning", "theory", "practice"]);
-
-        if (!qbErr) {
-          const grouped: Record<
-            string,
-            { prelearning: unknown[]; theory: unknown[]; practice: unknown[] }
-          > = {};
-
-          for (const lessonId of lessonIds) {
-            grouped[lessonId] = { prelearning: [], theory: [], practice: [] };
-          }
-
-          for (const row of (qbRows ?? []) as QuestionBankRow[]) {
-            const lid = row.lesson_id;
-            const type = row.question_type as "prelearning" | "theory" | "practice";
-            if (!grouped[lid] || !(type in grouped[lid])) continue;
-
-            const normalized = {
-              question_text: row.question_text ?? "",
-              instruction_vi: row.instruction_vi ?? "",
-              instruction_en: row.instruction_en ?? "",
-              sentence_en: row.sentence_en ?? "",
-              options: Array.isArray(row.options) ? row.options : [],
-              answer_index:
-                typeof row.answer_index === "number" ? row.answer_index : 0,
-              explanation_vi: row.explanation_vi ?? "",
-              skill_tag: row.skill_tag ?? "",
-              difficulty:
-                row.difficulty === "easy" ||
-                row.difficulty === "medium" ||
-                row.difficulty === "hard"
-                  ? row.difficulty
-                  : "easy",
-              is_active: row.is_active ?? true,
-            };
-
-            grouped[lid][type].push(normalized);
-            if (normalized.is_active) {
-              nextCounts[lid][type] += 1;
-            }
-          }
-
-          for (const lessonId of lessonIds) {
-            nextDrafts[lessonId].prelearningJson = grouped[lessonId].prelearning.length
-              ? JSON.stringify(grouped[lessonId].prelearning, null, 2)
-              : "";
-            nextDrafts[lessonId].theoryJson = grouped[lessonId].theory.length
-              ? JSON.stringify(grouped[lessonId].theory, null, 2)
-              : "";
-            nextDrafts[lessonId].practiceJson = grouped[lessonId].practice.length
-              ? JSON.stringify(grouped[lessonId].practice, null, 2)
-              : "";
-
-            nextStatus[lessonId].prelearningJson = {
-              kind: "loaded",
-              text: grouped[lessonId].prelearning.length
-                ? `Loaded ${grouped[lessonId].prelearning.length} questions from database`
-                : "No saved prelearning questions yet",
-            };
-            nextStatus[lessonId].theoryJson = {
-              kind: "loaded",
-              text: grouped[lessonId].theory.length
-                ? `Loaded ${grouped[lessonId].theory.length} questions from database`
-                : "No saved theory questions yet",
-            };
-            nextStatus[lessonId].practiceJson = {
-              kind: "loaded",
-              text: grouped[lessonId].practice.length
-                ? `Loaded ${grouped[lessonId].practice.length} questions from database`
-                : "No saved practice questions yet",
-            };
-          }
-        } else {
-          for (const lessonId of lessonIds) {
-            nextStatus[lessonId].prelearningJson = {
-              kind: "error",
-              text: "Load failed: " + qbErr.message,
-            };
-            nextStatus[lessonId].theoryJson = {
-              kind: "error",
-              text: "Load failed: " + qbErr.message,
-            };
-            nextStatus[lessonId].practiceJson = {
-              kind: "error",
-              text: "Load failed: " + qbErr.message,
-            };
-          }
+      } else {
+        for (const lessonId of lessonIds) {
+          nextStatus[lessonId].prelearningJson = {
+            kind: "error",
+            text: "Load failed: " + qbErr.message,
+          };
+          nextStatus[lessonId].theoryJson = {
+            kind: "error",
+            text: "Load failed: " + qbErr.message,
+          };
+          nextStatus[lessonId].practiceJson = {
+            kind: "error",
+            text: "Load failed: " + qbErr.message,
+          };
         }
       }
+    }
 
-      setLessonDrafts(nextDrafts);
-      setSectionStatus(nextStatus);
-      setCountsByLesson(nextCounts);
+    setLessonDrafts(nextDrafts);
+    setSectionStatus(nextStatus);
+    setCountsByLesson(nextCounts);
+    setExpandedLessonId(nextLessons.length > 0 ? nextLessons[0].id : null);
+  }
 
-      if (nextLessons.length > 0 && !expandedLessonId) {
-        setExpandedLessonId(nextLessons[0].id);
-      }
-    })();
-  }, [selectedClassId, expandedLessonId]);
+  useEffect(() => {
+    void loadClassContent(selectedClassId);
+  }, [selectedClassId]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -921,17 +924,7 @@ export default function AdminPage() {
 
   async function reloadSelectedClassLessons() {
     if (!selectedClassId) return;
-    const { data, error } = await supabase
-      .from("lessons")
-      .select("id,class_id,title,order_index,slide_path,slide_updated_at")
-      .eq("class_id", selectedClassId)
-      .order("order_index", { ascending: true });
-
-    if (error) {
-      setMsg("Reload lessons lỗi: " + error.message);
-      return;
-    }
-    setLessons((data as LessonRow[]) ?? []);
+    await loadClassContent(selectedClassId);
   }
 
   async function cloneFromTemplate() {
@@ -953,7 +946,11 @@ export default function AdminPage() {
     if (hasExisting) {
       const ok = window.confirm(
         `Class "${selectedClass?.name ?? selectedClassId}" đã có ${lessons.length} lessons.\n\n` +
-          `MVP clone sẽ XÓA lessons hiện tại của class này rồi copy y hệt lessons + slide_path từ "${templateClass.name}".\n\n` +
+          `Clone lần này sẽ XÓA lesson/content hiện tại của class đích rồi copy y hệt từ "${templateClass.name}", bao gồm:\n` +
+          `- lessons\n` +
+          `- slide_path\n` +
+          `- lesson_truth\n` +
+          `- question_bank (prelearning / theory / practice)\n\n` +
           `Bạn chắc chắn muốn tiếp tục?`
       );
       if (!ok) return;
@@ -980,18 +977,72 @@ export default function AdminPage() {
         return;
       }
 
-      if (hasExisting) {
-        const { error: delErr } = await supabase
+      const templateLessonIds = templateList.map((l) => l.id);
+
+      const { data: tplTruthRows, error: tplTruthErr } = await supabase
+        .from("lesson_truth")
+        .select("lesson_id,required_notes,rubric")
+        .in("lesson_id", templateLessonIds);
+
+      if (tplTruthErr) {
+        setMsg("❌ Load template lesson_truth lỗi: " + tplTruthErr.message);
+        return;
+      }
+
+      const { data: tplQbRows, error: tplQbErr } = await supabase
+        .from("question_bank")
+        .select(
+          "lesson_id,question_type,question_text,instruction_vi,instruction_en,sentence_en,options,answer_index,explanation_vi,skill_tag,difficulty,is_active"
+        )
+        .in("lesson_id", templateLessonIds)
+        .in("question_type", ["prelearning", "theory", "practice"]);
+
+      if (tplQbErr) {
+        setMsg("❌ Load template question_bank lỗi: " + tplQbErr.message);
+        return;
+      }
+
+      const existingLessonIds = lessons.map((l) => l.id);
+
+      if (existingLessonIds.length > 0) {
+        const { error: deleteTargetQbErr } = await supabase
+          .from("question_bank")
+          .delete()
+          .in("lesson_id", existingLessonIds);
+
+        if (deleteTargetQbErr) {
+          setMsg(
+            "❌ Xóa question_bank cũ của class đích lỗi: " +
+              deleteTargetQbErr.message
+          );
+          return;
+        }
+
+        const { error: deleteTargetTruthErr } = await supabase
+          .from("lesson_truth")
+          .delete()
+          .in("lesson_id", existingLessonIds);
+
+        if (deleteTargetTruthErr) {
+          setMsg(
+            "❌ Xóa lesson_truth cũ của class đích lỗi: " +
+              deleteTargetTruthErr.message
+          );
+          return;
+        }
+
+        const { error: delLessonsErr } = await supabase
           .from("lessons")
           .delete()
           .eq("class_id", selectedClassId);
-        if (delErr) {
-          setMsg("❌ Xóa lessons hiện tại của class lỗi: " + delErr.message);
+
+        if (delLessonsErr) {
+          setMsg("❌ Xóa lessons hiện tại của class lỗi: " + delLessonsErr.message);
           return;
         }
       }
 
-      const insertRows = templateList.map((l) => ({
+      const insertLessonRows = templateList.map((l) => ({
         class_id: selectedClassId,
         title: l.title,
         order_index: l.order_index,
@@ -999,21 +1050,104 @@ export default function AdminPage() {
         slide_updated_at: l.slide_updated_at,
       }));
 
-      const { error: insErr } = await supabase
+      const { data: insertedLessons, error: insLessonsErr } = await supabase
         .from("lessons")
-        .insert(insertRows);
-      if (insErr) {
-        setMsg("❌ Insert cloned lessons lỗi: " + insErr.message);
+        .insert(insertLessonRows)
+        .select("id,class_id,title,order_index,slide_path,slide_updated_at")
+        .order("order_index", { ascending: true });
+
+      if (insLessonsErr || !insertedLessons) {
+        setMsg(
+          "❌ Insert cloned lessons lỗi: " +
+            (insLessonsErr?.message ?? "unknown")
+        );
         return;
       }
 
+      const clonedLessons = insertedLessons as LessonRow[];
+
+      if (clonedLessons.length !== templateList.length) {
+        setMsg(
+          `❌ Clone lessons không đủ số lượng. Template có ${templateList.length}, nhưng insert được ${clonedLessons.length}.`
+        );
+        return;
+      }
+
+      const lessonIdMap = new Map<string, string>();
+      for (let i = 0; i < templateList.length; i += 1) {
+        lessonIdMap.set(templateList[i].id, clonedLessons[i].id);
+      }
+
+      const truthInsertRows = ((tplTruthRows ?? []) as LessonTruthRow[])
+        .map((row) => {
+          const newLessonId = lessonIdMap.get(row.lesson_id);
+          if (!newLessonId) return null;
+          return {
+            lesson_id: newLessonId,
+            required_notes: row.required_notes ?? "",
+            rubric: row.rubric ?? {},
+            updated_at: new Date().toISOString(),
+          };
+        })
+        .filter(Boolean);
+
+      if (truthInsertRows.length > 0) {
+        const { error: insTruthErr } = await supabase
+          .from("lesson_truth")
+          .insert(truthInsertRows);
+
+        if (insTruthErr) {
+          setMsg("❌ Clone lesson_truth lỗi: " + insTruthErr.message);
+          return;
+        }
+      }
+
+      const qbInsertRows = ((tplQbRows ?? []) as QuestionBankRow[])
+        .map((row) => {
+          const newLessonId = lessonIdMap.get(row.lesson_id);
+          if (!newLessonId) return null;
+          return {
+            lesson_id: newLessonId,
+            question_type: row.question_type,
+            question_text: row.question_text ?? "",
+            instruction_vi: row.instruction_vi ?? "",
+            instruction_en: row.instruction_en ?? "",
+            sentence_en: row.sentence_en ?? "",
+            options: Array.isArray(row.options) ? row.options : [],
+            answer_index:
+              typeof row.answer_index === "number" ? row.answer_index : 0,
+            explanation_vi: row.explanation_vi ?? "",
+            skill_tag: row.skill_tag ?? "",
+            difficulty:
+              row.difficulty === "easy" ||
+              row.difficulty === "medium" ||
+              row.difficulty === "hard"
+                ? row.difficulty
+                : "easy",
+            is_active: row.is_active ?? true,
+          };
+        })
+        .filter(Boolean);
+
+      if (qbInsertRows.length > 0) {
+        const { error: insQbErr } = await supabase
+          .from("question_bank")
+          .insert(qbInsertRows);
+
+        if (insQbErr) {
+          setMsg("❌ Clone question_bank lỗi: " + insQbErr.message);
+          return;
+        }
+      }
+
       await reloadSelectedClassLessons();
-      setExpandedLessonId(null);
+
       setMsg(
         `✅ Clone thành công!\n` +
           `Nguồn: ${templateClass.name}\n` +
           `Đích: ${selectedClass?.name ?? selectedClassId}\n` +
-          `Đã copy ${insertRows.length} lessons + slide_path.`
+          `Đã copy ${clonedLessons.length} lessons.\n` +
+          `Đã clone kèm slide_path + lesson_truth + question_bank.`
       );
     } finally {
       setCloneBusy(false);
@@ -1451,7 +1585,7 @@ export default function AdminPage() {
                 >
                   {cloneBusy
                     ? "Cloning…"
-                    : `📌 Clone from ${templateClass?.name ?? "LIP-EL-001"} (include slides)`}
+                    : `📌 Clone from ${templateClass?.name ?? "LIP-EL-001"} (all lesson content)`}
                 </button>
               </div>
 
@@ -2058,6 +2192,8 @@ export default function AdminPage() {
         - Truth Source đang lưu vào lesson_truth.required_notes.
         <br />
         - Prelearning / Theory / Practice lưu kiểu replace set trong question_bank.
+        <br />
+        - Clone from template hiện đã copy lessons + slide_path + lesson_truth + question_bank.
         <br />
         - F5 sẽ load lại nội dung đã lưu từ DB.
       </div>
