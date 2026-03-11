@@ -315,6 +315,7 @@ export default function AdminPage() {
     for (let i = 0; i < rows.length; i += 1) {
       const q = rows[i];
       const n = i + 1;
+      const answerIndex = q.answer_index ?? -1;
 
       if (!q.question_text) {
         return { ok: false, error: `Câu ${n} thiếu question_text.` };
@@ -328,7 +329,7 @@ export default function AdminPage() {
         return { ok: false, error: `Câu ${n} có option đang rỗng.` };
       }
 
-      if (!Number.isInteger(q.answer_index) || q.answer_index < 0 || q.answer_index > 3) {
+      if (!Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex > 3) {
         return { ok: false, error: `Câu ${n} có answer_index không hợp lệ. Chỉ được 0–3.` };
       }
 
